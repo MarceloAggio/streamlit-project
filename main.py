@@ -678,16 +678,49 @@ class StreamlitAlertAnalyzer:
             with col4:
                 st.metric("Máximo (h)", f"{intervals.max():.2f}")
 
-    def show_individual_isolated_analysis(self):
-        st.subheader("🔴 Ocorrências Isoladas do Alert ID")
-        isolated_alerts = self.df[self.df['isolated']]
-        total_alerts = len(self.df)
-        if len(isolated_alerts) > 0:
-            st.write(f"Total de ocorrências isoladas: {len(isolated_alerts)} ({len(isolated_alerts)/total_alerts*100:.2f}%)")
-            st.dataframe(isolated_alerts[['created_on', 'hour', 'day_name', 'time_diff_hours']], use_container_width=True)
-        else:
-            st.info("Nenhuma ocorrência isolada detectada neste alerta.")
-
+    def show_individual_alert_analysis(self):
+        st.header(f"📌 Análise Individual do Alert ID: {self.alert_id}")
+    
+        if self.df is None or len(self.df) == 0:
+            st.info("Nenhum dado disponível para este alerta.")
+            return
+    
+        # Separar alertas isolados e contínuos
+        df_isolated = self.df[self.df['isolated']]
+        df_continuous = self.df[~self.df['isolated']]
+    
+        tab1, tab2 = st.tabs(["🔴 Isolados", "🟢 Contínuos"])
+    
+        with tab1:
+            st.subheader(f"🔴 Ocorrências Isoladas ({len(df_isolated)})")
+            if len(df_isolated) > 0:
+                st.dataframe(df_isolated[['created_on', 'hour', 'day_name', 'time_diff_hours']], use_container_width=True)
+                st.write(f"Percentual de ocorrências isoladas: {len(df_isolated)/len(self.df)*100:.2f}%")
+            else:
+                st.info("Nenhuma ocorrência isolada detectada neste alerta.")
+    
+        with tab2:
+            st.subheader(f"🟢 Ocorrências Contínuas ({len(df_continuous)})")
+            if len(df_continuous) > 0:
+                st.dataframe(df_continuous[['created_on', 'hour', 'day_name', 'time_diff_hours']], use_container_width=True)
+                st.write(f"Percentual de ocorrências contínuas: {len(df_continuous)/len(self.df)*100:.2f}%")
+            else:
+                st.info("Nenhuma ocorrência contínua detectada neste alerta.")
+    
+        # Estatísticas gerais
+        st.subheader("📊 Estatísticas Gerais do Alert ID")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Ocorrências", len(self.df))
+        with col2:
+            st.metric("Isolados", len(df_isolated))
+        with col3:
+            st.metric("Contínuos", len(df_continuous))
+        with col4:
+            avg_interval = self.df['time_diff_hours'].dropna().mean() if len(self.df) > 1 else 0
+            st.metric("Intervalo Médio (h)", f"{avg_interval:.2f}")
+    
+    
 
 
     def show_temporal_patterns(self):
