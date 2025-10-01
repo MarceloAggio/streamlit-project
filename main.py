@@ -181,6 +181,8 @@ class StreamlitAlertAnalyzer:
         # Marca alertas isolados
         isolation_threshold_days = self.isolation_threshold_days
         df_filtered['isolated'] = (df_filtered['time_diff_days'] > isolation_threshold_days) | (df_filtered['time_diff_days'].isna())
+        df_filtered.loc[df_filtered.index[0], 'isolated'] = True  # garante que o primeiro alerta seja isolado
+
 
         self.df = df_filtered
         self.dates = df_filtered['created_on']
@@ -312,6 +314,8 @@ class StreamlitAlertAnalyzer:
             st.subheader(f"🔴 Alertas Isolados ({len(df_isolated)} alertas)")
             
             if len(df_isolated) > 0:
+                fig_iso = px.line(df_isolated, x='created_on', y='time_diff_days', title="⏳ Intervalos entre Alertas Isolados (dias)")
+                st.plotly_chart(fig_iso, use_container_width=True)
                 # Razões para isolamento
                 st.write("**📝 Razões para Classificação como Isolado:**")
                 reason_counts = df_isolated['pattern_reason'].value_counts()
@@ -677,11 +681,13 @@ class StreamlitAlertAnalyzer:
     def show_individual_isolated_analysis(self):
         st.subheader("🔴 Ocorrências Isoladas do Alert ID")
         isolated_alerts = self.df[self.df['isolated']]
+        total_alerts = len(self.df)
         if len(isolated_alerts) > 0:
-            st.write(f"Total de ocorrências isoladas: {len(isolated_alerts)}")
+            st.write(f"Total de ocorrências isoladas: {len(isolated_alerts)} ({len(isolated_alerts)/total_alerts*100:.2f}%)")
             st.dataframe(isolated_alerts[['created_on', 'hour', 'day_name', 'time_diff_hours']], use_container_width=True)
         else:
             st.info("Nenhuma ocorrência isolada detectada neste alerta.")
+
 
 
     def show_temporal_patterns(self):
@@ -752,7 +758,7 @@ class StreamlitAlertAnalyzer:
     def show_burst_analysis(self):
         st.header("💥 Análise de Rajadas")
         burst_threshold = st.slider("⏱️ Threshold para Rajada (horas)", 0.5, 24.0, 2.0, 0.5)
-        intervals = self.df['time_diff_hours'].fillna(999)
+        intervals = self.df[~self.df['isolated']]['time_diff_hours'].fillna(999)
         bursts, current_burst = [], []
         for i, interval in enumerate(intervals):
             if interval <= burst_threshold and i > 0:
