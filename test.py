@@ -1,4 +1,5 @@
 import pandas as pd
+import streamlit as st
 import numpy as np
 from datetime import datetime, timedelta
 import plotly.express as px
@@ -370,7 +371,7 @@ class StreamlitAlertAnalyzer:
                 title="📊 Distribuição de Padrões de Alerta",
                 color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
             )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, use_container_width=True, key='pattern_pie')
 
         with col2:
             # Estatísticas comparativas
@@ -414,7 +415,7 @@ class StreamlitAlertAnalyzer:
                     hover_data=['alert_id', 'pattern_reason', 'num_grupos'],
                     labels={'pct_isolados': '% Isolados'}
                 )
-                st.plotly_chart(fig_iso, use_container_width=True)
+                st.plotly_chart(fig_iso, use_container_width=True, key='isolated_scatter')
 
                 # Razões para isolamento
                 st.write("**📝 Razões para Classificação como Isolado:**")
@@ -462,7 +463,7 @@ class StreamlitAlertAnalyzer:
                         title="📊 Distribuição de Número de Grupos",
                         labels={'num_grupos': 'Número de Grupos', 'count': 'Quantidade'}
                     )
-                    st.plotly_chart(fig_groups, use_container_width=True)
+                    st.plotly_chart(fig_groups, use_container_width=True, key='continuous_groups_hist')
 
                 with col2:
                     fig_pct = px.histogram(
@@ -471,7 +472,7 @@ class StreamlitAlertAnalyzer:
                         title="📊 Distribuição de % de Alertas Isolados",
                         labels={'pct_isolados': '% Alertas Isolados', 'count': 'Quantidade'}
                     )
-                    st.plotly_chart(fig_pct, use_container_width=True)
+                    st.plotly_chart(fig_pct, use_container_width=True, key='continuous_pct_hist')
 
                 with st.expander("📋 Ver todos os alertas contínuos"):
                     continuous_list = df_continuous[['alert_id', 'total_ocorrencias', 'num_grupos',
@@ -501,7 +502,7 @@ class StreamlitAlertAnalyzer:
                 hover_data=['alert_id'],
                 color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
             )
-            st.plotly_chart(fig_scatter, use_container_width=True)
+            st.plotly_chart(fig_scatter, use_container_width=True, key='comparative_scatter')
 
             # Box plots comparativos
             col1, col2 = st.columns(2)
@@ -514,7 +515,7 @@ class StreamlitAlertAnalyzer:
                     color='pattern_type',
                     color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
                 )
-                st.plotly_chart(fig_box_occ, use_container_width=True)
+                st.plotly_chart(fig_box_occ, use_container_width=True, key='box_occurrences')
 
             with col2:
                 fig_box_freq = px.box(
@@ -525,7 +526,7 @@ class StreamlitAlertAnalyzer:
                     color='pattern_type',
                     color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
                 )
-                st.plotly_chart(fig_box_freq, use_container_width=True)
+                st.plotly_chart(fig_box_freq, use_container_width=True, key='box_frequency')
 
             # Recomendações
             st.subheader("💡 Recomendações de Tratamento")
@@ -593,7 +594,7 @@ class StreamlitAlertAnalyzer:
         
         df_for_clustering = self.df_all_alerts
         if use_only_continuous:
-            df_for_clustering = self.df_all_alerts[self.df_all_alerts['pattern_type'] == 'continuous']
+            df_for_clustering = self.df_all_alerts[self.df_all_alerts['pattern_type'] == 'continuous'].copy()
             st.info(f"🔍 Usando apenas alertas contínuos para clustering ({len(df_for_clustering)} alertas)")
         
         if len(df_for_clustering) < 2:
@@ -629,11 +630,18 @@ class StreamlitAlertAnalyzer:
         
         kmeans_final = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
         clusters = kmeans_final.fit_predict(X_scaled)
-        self.df_all_alerts['cluster'] = clusters
+        
+        # Atribuir clusters apenas aos alertas usados no clustering
+        df_for_clustering['cluster'] = clusters
+        
+        # Atualizar o dataframe principal apenas com os índices corretos
+        self.df_all_alerts['cluster'] = np.nan
+        self.df_all_alerts.loc[df_for_clustering.index, 'cluster'] = df_for_clustering['cluster']
+        
         col1, col2 = st.columns(2)
         with col1:
             fig_scatter = px.scatter(
-                self.df_all_alerts,
+                df_for_clustering,
                 x='freq_dia',
                 y='intervalo_medio_h',
                 color='cluster',
@@ -641,16 +649,16 @@ class StreamlitAlertAnalyzer:
                 hover_data=['alert_id'],
                 title="🎨 Clusters: Frequência vs Intervalo Médio"
             )
-            st.plotly_chart(fig_scatter, use_container_width=True)
+            st.plotly_chart(fig_scatter, use_container_width=True, key='cluster_scatter')
         with col2:
-            cluster_dist = self.df_all_alerts['cluster'].value_counts().sort_index()
+            cluster_dist = df_for_clustering['cluster'].value_counts().sort_index()
             fig_dist = px.bar(
                 x=cluster_dist.index,
                 y=cluster_dist.values,
                 title="📊 Distribuição de Alertas por Cluster",
                 labels={'x': 'Cluster', 'y': 'Quantidade de Alert IDs'}
             )
-            st.plotly_chart(fig_dist, use_container_width=True)
+            st.plotly_chart(fig_dist, use_container_width=True, key='cluster_dist')
         return optimal_k
 
     def show_cluster_profiles(self, n_clusters):
@@ -708,7 +716,7 @@ class StreamlitAlertAnalyzer:
                 with st.expander(f"📋 Alertas no Cluster {i}"):
                     cluster_alerts = cluster_data[['alert_id', 'total_ocorrencias', 'freq_dia', 'intervalo_medio_h']].copy()
                     cluster_alerts.columns = ['Alert ID', 'Total Ocorrências', 'Freq/Dia', 'Intervalo Médio (h)']
-                    st.dataframe(cluster_alerts, use_container_width=True)
+                    st.dataframe(cluster_alerts, use_container_width=True, key=f'cluster_table_{i}')
 
     def show_cluster_recommendations(self):
         st.subheader("💡 Recomendações por Cluster")
@@ -888,7 +896,7 @@ class StreamlitAlertAnalyzer:
                 labels={'x': 'Hora', 'y': 'Quantidade de Alertas'}
             )
             fig_hour.update_layout(showlegend=False)
-            st.plotly_chart(fig_hour, use_container_width=True)
+            st.plotly_chart(fig_hour, use_container_width=True, key='hourly_dist')
             peak_hour = hourly.idxmax()
             quiet_hour = hourly.idxmin()
             st.write(f"🕐 **Pico:** {peak_hour:02d}:00 ({hourly[peak_hour]} alertas)")
@@ -904,7 +912,7 @@ class StreamlitAlertAnalyzer:
                 labels={'x': 'Dia', 'y': 'Quantidade de Alertas'}
             )
             fig_day.update_layout(showlegend=False)
-            st.plotly_chart(fig_day, use_container_width=True)
+            st.plotly_chart(fig_day, use_container_width=True, key='daily_dist')
             busiest_day = daily.idxmax()
             st.write(f"📈 **Dia mais ativo:** {busiest_day} ({daily[busiest_day]} alertas)")
         col1, col2 = st.columns(2)
@@ -923,7 +931,7 @@ class StreamlitAlertAnalyzer:
                 names='Período',
                 title="Distribuição por Horário"
             )
-            st.plotly_chart(fig_business, use_container_width=True)
+            st.plotly_chart(fig_business, use_container_width=True, key='business_hours_pie')
         with col2:
             weekend = self.df['is_weekend'].sum()
             weekday = len(self.df) - weekend
@@ -939,7 +947,7 @@ class StreamlitAlertAnalyzer:
                 names='Período',
                 title="Distribuição Semanal"
             )
-            st.plotly_chart(fig_weekend, use_container_width=True)
+            st.plotly_chart(fig_weekend, use_container_width=True, key='weekend_pie')
 
     def show_burst_analysis(self):
         st.header("💥 Análise de Rajadas")
@@ -1011,7 +1019,7 @@ class StreamlitAlertAnalyzer:
                 yaxis_title="Número de Alertas",
                 hovermode='x'
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key='trend_analysis')
             if slope > 0.01:
                 trend = "CRESCENTE 📈"
             elif slope < -0.01:
@@ -1060,7 +1068,7 @@ class StreamlitAlertAnalyzer:
                 title="📊 Distribuição dos Intervalos (Detecção de Outliers)",
                 yaxis_title="Horas"
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key='anomaly_boxplot')
             if len(fast_anomalies) > 0 or len(slow_anomalies) > 0:
                 col1, col2 = st.columns(2)
                 with col1:
