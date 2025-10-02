@@ -23,23 +23,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrences=2):
+def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrences=3):
     """
-    Classifica um alerta como isolado ou contínuo
-    
-    Parameters:
-    - alert_data: DataFrame com dados de um único alert_id
-    - isolation_threshold_days: número de dias sem ocorrências para considerar isolado
-    - min_occurrences: mínimo de ocorrências para não ser considerado isolado
-    
-    Returns:
-    - dict com classificação e métricas
+    Classifica um alerta como isolado ou contínuo de forma mais consistente.
     """
-    if len(alert_data) < min_occurrences:
+    n = len(alert_data)
+    if n == 0:
         return {
             'pattern': 'isolated',
-            'reason': f'Menos de {min_occurrences} ocorrências',
-            'occurrences': len(alert_data),
+            'reason': 'Sem ocorrências',
+            'occurrences': 0,
             'max_interval_days': None,
             'avg_interval_days': None
         }
@@ -51,33 +44,48 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
     if len(intervals) == 0:
         return {
             'pattern': 'isolated',
-            'reason': 'Sem intervalos calculáveis',
-            'occurrences': len(alert_data),
+            'reason': 'Apenas uma ocorrência',
+            'occurrences': n,
             'max_interval_days': None,
             'avg_interval_days': None
         }
     
     max_interval = intervals.max()
     avg_interval = intervals.mean()
+    variability = intervals.std() / avg_interval if avg_interval > 0 else 0
+
+    # Definições de isolamento
+    if n < min_occurrences:
+        return {
+            'pattern': 'isolated',
+            'reason': f'Poucas ocorrências ({n})',
+            'occurrences': n,
+            'max_interval_days': max_interval,
+            'avg_interval_days': avg_interval
+        }
     
-    # Verifica se há grandes gaps entre ocorrências
-    if max_interval > isolation_threshold_days:
-        # Verifica se a maioria dos intervalos são grandes
-        large_intervals = (intervals > isolation_threshold_days).sum()
-        if large_intervals / len(intervals) > 0.3:  # Se mais de 30% dos intervalos são grandes
-            return {
-                'pattern': 'isolated',
-                'reason': f'Intervalos grandes (max: {max_interval:.1f} dias)',
-                'occurrences': len(alert_data),
-                'max_interval_days': max_interval,
-                'avg_interval_days': avg_interval
-            }
+    if avg_interval > isolation_threshold_days:
+        return {
+            'pattern': 'isolated',
+            'reason': f'Ocorrências muito espaçadas (média {avg_interval:.1f} dias)',
+            'occurrences': n,
+            'max_interval_days': max_interval,
+            'avg_interval_days': avg_interval
+        }
     
-    # Verifica se é um padrão contínuo
+    if variability > 1:  # muita irregularidade nos intervalos
+        return {
+            'pattern': 'isolated',
+            'reason': f'Alta variabilidade nos intervalos (CV={variability:.2f})',
+            'occurrences': n,
+            'max_interval_days': max_interval,
+            'avg_interval_days': avg_interval
+        }
+    
     return {
         'pattern': 'continuous',
-        'reason': 'Padrão regular de ocorrências',
-        'occurrences': len(alert_data),
+        'reason': 'Padrão consistente de ocorrências',
+        'occurrences': n,
         'max_interval_days': max_interval,
         'avg_interval_days': avg_interval
     }
