@@ -64,7 +64,6 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
     # CRITÉRIOS DE ISOLAMENTO
     # -------------------
     
-    # 1 - Poucas ocorrências
     if n < min_occurrences:
         return {
             'pattern': 'isolated',
@@ -74,7 +73,6 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # 2 - Explosão em único dia
     if active_days == 1:
         return {
             'pattern': 'isolated',
@@ -84,7 +82,6 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': None
         }
     
-    # 3 - Gaps muito grandes
     if avg_interval > isolation_threshold_days or max_interval > isolation_threshold_days * 3:
         return {
             'pattern': 'isolated',
@@ -94,7 +91,6 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # 4 - Baixa frequência média
     if freq_per_day < low_freq_threshold:
         return {
             'pattern': 'isolated',
@@ -104,7 +100,6 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # 5 - Alta irregularidade
     if variability > 1.5:
         return {
             'pattern': 'isolated',
@@ -114,7 +109,6 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # 6 - Concentração em poucos dias dentro de um período longo
     if active_days <= 2 and total_days > 30:
         return {
             'pattern': 'isolated',
@@ -124,7 +118,6 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # 7 - Ocorrências só no início do período
     if (alert_data['created_on'].max() < alert_data['created_on'].min() + pd.Timedelta(days=total_days*0.2)):
         return {
             'pattern': 'isolated',
@@ -134,9 +127,7 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # -------------------
-    # CASO CONTRÁRIO = CONTÍNUO
-    # -------------------
+    # Caso contrário = contínuo
     return {
         'pattern': 'continuous',
         'reason': 'Padrão consistente de ocorrências',
@@ -145,13 +136,16 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
         'avg_interval_days': avg_interval
     }
 
+# ============================================================
+# Funções de processamento
+# ============================================================
 def process_single_alert(alert_id, df_original, isolation_threshold_days=7, min_occurrences=2):
     try:
         df_alert = df_original[df_original['u_alert_id'] == alert_id].copy()
-        if len(df_alert) < 1:  # Mudado de 2 para 1 para incluir alertas únicos
+        if len(df_alert) < 1:
             return None
         
-        # Classificação de padrão (isolado vs contínuo)
+        # Classificação de padrão
         pattern_info = classify_alert_pattern(df_alert, isolation_threshold_days, min_occurrences)
         
         df_alert['hour'] = df_alert['created_on'].dt.hour
@@ -187,7 +181,7 @@ def process_single_alert(alert_id, df_original, isolation_threshold_days=7, min_
             'ultimo_alerta': df_alert['created_on'].max()
         }
         return metrics
-    except Exception as e:
+    except Exception:
         return None
 
 def process_alert_chunk(alert_ids, df_original, isolation_threshold_days=7, min_occurrences=2):
@@ -325,16 +319,16 @@ class StreamlitAlertAnalyzer:
         return len(self.df_all_alerts) > 0
 
     def show_isolated_vs_continuous_analysis(self):
-            
+
         st.header("🔍 Análise de Alertas Isolados vs Contínuos")
-    
+
         # Garantir que não tenha duplicados
         self.df_all_alerts = self.df_all_alerts.drop_duplicates(subset=['alert_id'])
-    
+
         # Separar alertas
         df_isolated = self.df_all_alerts[self.df_all_alerts['pattern_type'] == 'isolated']
         df_continuous = self.df_all_alerts[self.df_all_alerts['pattern_type'] == 'continuous']
-    
+
         # Visualização geral
         col1, col2 = st.columns(2)
         with col1:
@@ -347,7 +341,7 @@ class StreamlitAlertAnalyzer:
                 color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
             )
             st.plotly_chart(fig_pie, use_container_width=True)
-    
+
         with col2:
             # Estatísticas comparativas
             st.subheader("📈 Comparação de Métricas")
@@ -371,16 +365,16 @@ class StreamlitAlertAnalyzer:
             })
             comparison_data = comparison_data.round(2)
             st.dataframe(comparison_data, use_container_width=True)
-    
+
         # Tabs para detalhes
         tab1, tab2, tab3 = st.tabs(["🔴 Alertas Isolados", "🟢 Alertas Contínuos", "📊 Análise Comparativa"])
-    
+
         # ------------------------------
         # ISOLADOS
         # ------------------------------
         with tab1:
             st.subheader(f"🔴 Alertas Isolados ({len(df_isolated)} alertas)")
-    
+
             if len(df_isolated) > 0:
                 fig_iso = px.scatter(
                     df_isolated,
@@ -390,13 +384,13 @@ class StreamlitAlertAnalyzer:
                     hover_data=['alert_id', 'pattern_reason']
                 )
                 st.plotly_chart(fig_iso, use_container_width=True)
-    
+
                 # Razões para isolamento
                 st.write("**📝 Razões para Classificação como Isolado:**")
                 reason_counts = df_isolated['pattern_reason'].value_counts()
                 for reason, count in reason_counts.items():
                     st.write(f"• {reason}: {count} alertas")
-    
+
                 # Top alertas isolados
                 st.write("**🔝 Top 10 Alertas Isolados (por ocorrências):**")
                 top_isolated = df_isolated.nlargest(10, 'total_ocorrencias')[
@@ -404,7 +398,7 @@ class StreamlitAlertAnalyzer:
                 ]
                 top_isolated.columns = ['Alert ID', 'Ocorrências', 'Max Intervalo (dias)', 'Razão']
                 st.dataframe(top_isolated, use_container_width=True)
-    
+
                 with st.expander("📋 Ver todos os alertas isolados"):
                     isolated_list = df_isolated[['alert_id', 'total_ocorrencias',
                                                 'max_intervalo_dias', 'pattern_reason']].copy()
@@ -412,13 +406,13 @@ class StreamlitAlertAnalyzer:
                     st.dataframe(isolated_list, use_container_width=True)
             else:
                 st.info("Nenhum alerta isolado encontrado com os critérios atuais.")
-    
+
         # ------------------------------
         # CONTÍNUOS
         # ------------------------------
         with tab2:
             st.subheader(f"🟢 Alertas Contínuos ({len(df_continuous)} alertas)")
-    
+
             if len(df_continuous) > 0:
                 # Top alertas contínuos
                 st.write("**🔝 Top 10 Alertas Contínuos (maior frequência):**")
@@ -427,7 +421,7 @@ class StreamlitAlertAnalyzer:
                 ]
                 top_continuous.columns = ['Alert ID', 'Total Ocorrências', 'Freq/Dia', 'Intervalo Médio (h)']
                 st.dataframe(top_continuous, use_container_width=True)
-    
+
                 # Distribuição de frequências
                 col1, col2 = st.columns(2)
                 with col1:
@@ -438,7 +432,7 @@ class StreamlitAlertAnalyzer:
                         labels={'freq_dia': 'Alertas por Dia', 'count': 'Quantidade'}
                     )
                     st.plotly_chart(fig_freq, use_container_width=True)
-    
+
                 with col2:
                     fig_int = px.histogram(
                         df_continuous,
@@ -447,7 +441,7 @@ class StreamlitAlertAnalyzer:
                         labels={'intervalo_medio_h': 'Intervalo Médio (h)', 'count': 'Quantidade'}
                     )
                     st.plotly_chart(fig_int, use_container_width=True)
-    
+
                 with st.expander("📋 Ver todos os alertas contínuos"):
                     continuous_list = df_continuous[['alert_id', 'total_ocorrencias', 
                                                     'freq_dia', 'intervalo_medio_h']].copy()
@@ -455,13 +449,13 @@ class StreamlitAlertAnalyzer:
                     st.dataframe(continuous_list, use_container_width=True)
             else:
                 st.info("Nenhum alerta contínuo encontrado com os critérios atuais.")
-    
+
         # ------------------------------
         # ANÁLISE COMPARATIVA
         # ------------------------------
         with tab3:
             st.subheader("📊 Análise Comparativa Detalhada")
-    
+
             # Scatter plot comparativo
             fig_scatter = px.scatter(
                 self.df_all_alerts,
@@ -478,7 +472,7 @@ class StreamlitAlertAnalyzer:
                 color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
             )
             st.plotly_chart(fig_scatter, use_container_width=True)
-    
+
             # Box plots comparativos
             col1, col2 = st.columns(2)
             with col1:
@@ -491,7 +485,7 @@ class StreamlitAlertAnalyzer:
                     color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
                 )
                 st.plotly_chart(fig_box_occ, use_container_width=True)
-    
+
             with col2:
                 fig_box_freq = px.box(
                     self.df_all_alerts,
@@ -502,7 +496,7 @@ class StreamlitAlertAnalyzer:
                     color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
                 )
                 st.plotly_chart(fig_box_freq, use_container_width=True)
-    
+
             # Recomendações
             st.subheader("💡 Recomendações de Tratamento")
             col1, col2 = st.columns(2)
@@ -512,7 +506,7 @@ class StreamlitAlertAnalyzer:
                 st.write("• Verificar se são falsos positivos")
                 st.write("• Analisar contexto específico das ocorrências")
                 st.write("• Avaliar consolidação com outros alertas similares")
-    
+
             with col2:
                 st.write("**🟢 Para Alertas Contínuos:**")
                 st.write("• Priorizar automação de resposta")
