@@ -325,16 +325,18 @@ class StreamlitAlertAnalyzer:
         return len(self.df_all_alerts) > 0
 
     def show_isolated_vs_continuous_analysis(self):
-        """Nova função para análise de alertas isolados vs contínuos"""
+            
         st.header("🔍 Análise de Alertas Isolados vs Contínuos")
-        
+    
+        # Garantir que não tenha duplicados
+        self.df_all_alerts = self.df_all_alerts.drop_duplicates(subset=['alert_id'])
+    
         # Separar alertas
         df_isolated = self.df_all_alerts[self.df_all_alerts['pattern_type'] == 'isolated']
         df_continuous = self.df_all_alerts[self.df_all_alerts['pattern_type'] == 'continuous']
-        
+    
         # Visualização geral
         col1, col2 = st.columns(2)
-        
         with col1:
             # Gráfico de pizza
             pattern_dist = self.df_all_alerts['pattern_type'].value_counts()
@@ -345,13 +347,13 @@ class StreamlitAlertAnalyzer:
                 color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
             )
             st.plotly_chart(fig_pie, use_container_width=True)
-        
+    
         with col2:
             # Estatísticas comparativas
             st.subheader("📈 Comparação de Métricas")
             comparison_data = pd.DataFrame({
                 'Métrica': ['Qtd Alertas', 'Média Ocorrências', 'Mediana Ocorrências', 
-                           'Média Freq/Dia', 'Média Intervalo (h)'],
+                            'Média Freq/Dia', 'Média Intervalo (h)'],
                 'Isolados': [
                     len(df_isolated),
                     df_isolated['total_ocorrencias'].mean() if len(df_isolated) > 0 else 0,
@@ -369,22 +371,32 @@ class StreamlitAlertAnalyzer:
             })
             comparison_data = comparison_data.round(2)
             st.dataframe(comparison_data, use_container_width=True)
-        
+    
         # Tabs para detalhes
         tab1, tab2, tab3 = st.tabs(["🔴 Alertas Isolados", "🟢 Alertas Contínuos", "📊 Análise Comparativa"])
-        
+    
+        # ------------------------------
+        # ISOLADOS
+        # ------------------------------
         with tab1:
             st.subheader(f"🔴 Alertas Isolados ({len(df_isolated)} alertas)")
-            
+    
             if len(df_isolated) > 0:
-                fig_iso = px.line(df_isolated, x='created_on', y='time_diff_days', title="⏳ Intervalos entre Alertas Isolados (dias)")
+                fig_iso = px.scatter(
+                    df_isolated,
+                    x='primeiro_alerta',
+                    y='total_ocorrencias',
+                    title="⏳ Ocorrências de Alertas Isolados no Tempo",
+                    hover_data=['alert_id', 'pattern_reason']
+                )
                 st.plotly_chart(fig_iso, use_container_width=True)
+    
                 # Razões para isolamento
                 st.write("**📝 Razões para Classificação como Isolado:**")
                 reason_counts = df_isolated['pattern_reason'].value_counts()
                 for reason, count in reason_counts.items():
                     st.write(f"• {reason}: {count} alertas")
-                
+    
                 # Top alertas isolados
                 st.write("**🔝 Top 10 Alertas Isolados (por ocorrências):**")
                 top_isolated = df_isolated.nlargest(10, 'total_ocorrencias')[
@@ -392,19 +404,21 @@ class StreamlitAlertAnalyzer:
                 ]
                 top_isolated.columns = ['Alert ID', 'Ocorrências', 'Max Intervalo (dias)', 'Razão']
                 st.dataframe(top_isolated, use_container_width=True)
-                
-                # Lista completa expansível
+    
                 with st.expander("📋 Ver todos os alertas isolados"):
-                    isolated_list = df_isolated[['alert_id', 'total_ocorrencias', 
+                    isolated_list = df_isolated[['alert_id', 'total_ocorrencias',
                                                 'max_intervalo_dias', 'pattern_reason']].copy()
                     isolated_list.columns = ['Alert ID', 'Ocorrências', 'Max Intervalo (dias)', 'Razão']
                     st.dataframe(isolated_list, use_container_width=True)
             else:
                 st.info("Nenhum alerta isolado encontrado com os critérios atuais.")
-        
+    
+        # ------------------------------
+        # CONTÍNUOS
+        # ------------------------------
         with tab2:
             st.subheader(f"🟢 Alertas Contínuos ({len(df_continuous)} alertas)")
-            
+    
             if len(df_continuous) > 0:
                 # Top alertas contínuos
                 st.write("**🔝 Top 10 Alertas Contínuos (maior frequência):**")
@@ -413,7 +427,7 @@ class StreamlitAlertAnalyzer:
                 ]
                 top_continuous.columns = ['Alert ID', 'Total Ocorrências', 'Freq/Dia', 'Intervalo Médio (h)']
                 st.dataframe(top_continuous, use_container_width=True)
-                
+    
                 # Distribuição de frequências
                 col1, col2 = st.columns(2)
                 with col1:
@@ -424,7 +438,7 @@ class StreamlitAlertAnalyzer:
                         labels={'freq_dia': 'Alertas por Dia', 'count': 'Quantidade'}
                     )
                     st.plotly_chart(fig_freq, use_container_width=True)
-                
+    
                 with col2:
                     fig_int = px.histogram(
                         df_continuous,
@@ -433,8 +447,7 @@ class StreamlitAlertAnalyzer:
                         labels={'intervalo_medio_h': 'Intervalo Médio (h)', 'count': 'Quantidade'}
                     )
                     st.plotly_chart(fig_int, use_container_width=True)
-                
-                # Lista completa expansível
+    
                 with st.expander("📋 Ver todos os alertas contínuos"):
                     continuous_list = df_continuous[['alert_id', 'total_ocorrencias', 
                                                     'freq_dia', 'intervalo_medio_h']].copy()
@@ -442,10 +455,13 @@ class StreamlitAlertAnalyzer:
                     st.dataframe(continuous_list, use_container_width=True)
             else:
                 st.info("Nenhum alerta contínuo encontrado com os critérios atuais.")
-        
+    
+        # ------------------------------
+        # ANÁLISE COMPARATIVA
+        # ------------------------------
         with tab3:
             st.subheader("📊 Análise Comparativa Detalhada")
-            
+    
             # Scatter plot comparativo
             fig_scatter = px.scatter(
                 self.df_all_alerts,
@@ -462,52 +478,41 @@ class StreamlitAlertAnalyzer:
                 color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
             )
             st.plotly_chart(fig_scatter, use_container_width=True)
-            
+    
             # Box plots comparativos
             col1, col2 = st.columns(2)
-            
             with col1:
                 fig_box_occ = px.box(
                     self.df_all_alerts,
                     x='pattern_type',
                     y='total_ocorrencias',
                     title="📦 Distribuição de Ocorrências",
-                    labels={
-                        'pattern_type': 'Tipo de Padrão',
-                        'total_ocorrencias': 'Total de Ocorrências'
-                    },
                     color='pattern_type',
                     color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
                 )
                 st.plotly_chart(fig_box_occ, use_container_width=True)
-            
+    
             with col2:
                 fig_box_freq = px.box(
                     self.df_all_alerts,
                     x='pattern_type',
                     y='freq_dia',
                     title="📦 Distribuição de Frequência Diária",
-                    labels={
-                        'pattern_type': 'Tipo de Padrão',
-                        'freq_dia': 'Frequência por Dia'
-                    },
                     color='pattern_type',
                     color_discrete_map={'isolated': '#ff4444', 'continuous': '#44ff44'}
                 )
                 st.plotly_chart(fig_box_freq, use_container_width=True)
-            
+    
             # Recomendações
             st.subheader("💡 Recomendações de Tratamento")
-            
             col1, col2 = st.columns(2)
-            
             with col1:
                 st.write("**🔴 Para Alertas Isolados:**")
                 st.write("• Considerar desativação ou revisão de configuração")
                 st.write("• Verificar se são falsos positivos")
                 st.write("• Analisar contexto específico das ocorrências")
                 st.write("• Avaliar consolidação com outros alertas similares")
-            
+    
             with col2:
                 st.write("**🟢 Para Alertas Contínuos:**")
                 st.write("• Priorizar automação de resposta")
