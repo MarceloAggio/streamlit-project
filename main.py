@@ -1017,7 +1017,8 @@ def main():
                         if analyzer.prepare_individual_analysis(selected_id):
                             st.success(f"🎯 Analisando alert_id: {selected_id} ({len(analyzer.df)} registros)")
                             st.info(f"📅 **Período analisado:** {analyzer.dates.min()} até {analyzer.dates.max()}")
-                            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+                                "🔍 Isolados vs Contínuos",
                                 "📊 Básico", 
                                 "⏰ Temporais", 
                                 "💥 Rajadas", 
@@ -1026,16 +1027,18 @@ def main():
                                 "🔮 Previsões"
                             ])
                             with tab1:
-                                analyzer.show_basic_stats()
+                                analyzer.show_individual_alert_analysis()
                             with tab2:
-                                analyzer.show_temporal_patterns()
+                                analyzer.show_basic_stats()
                             with tab3:
-                                analyzer.show_burst_analysis()
+                                analyzer.show_temporal_patterns()
                             with tab4:
-                                analyzer.show_trend_analysis()
+                                analyzer.show_burst_analysis()
                             with tab5:
-                                analyzer.show_anomaly_detection()
+                                analyzer.show_trend_analysis()
                             with tab6:
+                                analyzer.show_anomaly_detection()
+                            with tab7:
                                 analyzer.show_predictions()
                             st.sidebar.markdown("---")
                             st.sidebar.subheader("📥 Download")
