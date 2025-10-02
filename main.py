@@ -25,7 +25,8 @@ st.set_page_config(
 
 def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrences=3, low_freq_threshold=0.05):
     """
-    Classifica um alerta como isolado ou contínuo com múltiplos critérios adicionais.
+    Classifica um alerta como isolado ou contínuo com múltiplos critérios.
+    Inclui caso de explosão em um único dia (ex.: 200 alertas em um só dia).
     """
     n = len(alert_data)
     if n == 0:
@@ -57,7 +58,13 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
     total_days = (alert_data['created_on'].max() - alert_data['created_on'].min()).days + 1
     freq_per_day = n / total_days if total_days > 0 else 0
     
-    # Critério 1: poucas ocorrências
+    active_days = alert_data['created_on'].dt.date.nunique()
+    
+    # -------------------
+    # CRITÉRIOS DE ISOLAMENTO
+    # -------------------
+    
+    # 1 - Poucas ocorrências
     if n < min_occurrences:
         return {
             'pattern': 'isolated',
@@ -67,7 +74,17 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # Critério 2: gaps muito grandes
+    # 2 - Explosão em único dia
+    if active_days == 1:
+        return {
+            'pattern': 'isolated',
+            'reason': f'Todas as {n} ocorrências aconteceram em apenas 1 dia',
+            'occurrences': n,
+            'max_interval_days': None,
+            'avg_interval_days': None
+        }
+    
+    # 3 - Gaps muito grandes
     if avg_interval > isolation_threshold_days or max_interval > isolation_threshold_days * 3:
         return {
             'pattern': 'isolated',
@@ -77,7 +94,7 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # Critério 3: baixa frequência média
+    # 4 - Baixa frequência média
     if freq_per_day < low_freq_threshold:
         return {
             'pattern': 'isolated',
@@ -87,7 +104,7 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # Critério 4: alta irregularidade
+    # 5 - Alta irregularidade
     if variability > 1.5:
         return {
             'pattern': 'isolated',
@@ -97,8 +114,7 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # Critério 5: concentração em janela curta
-    active_days = alert_data['created_on'].dt.date.nunique()
+    # 6 - Concentração em poucos dias dentro de um período longo
     if active_days <= 2 and total_days > 30:
         return {
             'pattern': 'isolated',
@@ -108,7 +124,7 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
-    # Critério 6: desaparecimento após certo ponto
+    # 7 - Ocorrências só no início do período
     if (alert_data['created_on'].max() < alert_data['created_on'].min() + pd.Timedelta(days=total_days*0.2)):
         return {
             'pattern': 'isolated',
@@ -118,6 +134,9 @@ def classify_alert_pattern(alert_data, isolation_threshold_days=7, min_occurrenc
             'avg_interval_days': avg_interval
         }
     
+    # -------------------
+    # CASO CONTRÁRIO = CONTÍNUO
+    # -------------------
     return {
         'pattern': 'continuous',
         'reason': 'Padrão consistente de ocorrências',
