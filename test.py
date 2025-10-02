@@ -881,8 +881,7 @@ class StreamlitAlertAnalyzer:
                 height=400,
                 hovermode='closest'
             )
-            st.plotly_chart(fig, use_container_width=True)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key='individual_alert_timeline')
 
     def show_temporal_patterns(self):
         st.header("⏰ Padrões Temporais")
@@ -990,6 +989,7 @@ class StreamlitAlertAnalyzer:
                     'Duração': str(duration)
                 })
             st.dataframe(pd.DataFrame(burst_data), use_container_width=True)
+
 
     def show_trend_analysis(self):
         st.header("📈 Análise de Tendências")
