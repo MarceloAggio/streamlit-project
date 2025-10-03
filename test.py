@@ -1505,17 +1505,17 @@ class StreamlitAlertAnalyzer:
 
     def show_individual_alert_analysis(self):
         st.header(f"📌 Análise Individual do Alert ID: {self.alert_id}")
-    
+
         if self.df is None or len(self.df) == 0:
             st.info("Nenhum dado disponível para este alerta.")
             return
-        
+
         unique_days = self.df['date'].nunique()
         is_single_day = unique_days == 1
-    
+
         df_isolated = self.df[self.df['is_isolated']]
         df_grouped = self.df[~self.df['is_isolated']]
-    
+
         st.subheader("📊 Estatísticas Gerais do Alert ID")
         col1, col2, col3, col4, col5, col6 = st.columns(6)
         with col1:
@@ -1531,11 +1531,11 @@ class StreamlitAlertAnalyzer:
             st.metric("% Isolados", f"{pct_isolated:.1f}%")
         with col6:
             st.metric("📆 Dias Únicos", unique_days)
-        
+
         if is_single_day:
             st.warning("⚠️ **ATENÇÃO:** Todos os alertas ocorreram em apenas 1 dia! Este padrão é classificado como ISOLADO.")
             st.info(f"📅 Data única: {self.df['date'].iloc[0]}")
-    
+
         if len(self.groups_info) > 0:
             st.subheader("📦 Informações dos Grupos")
             groups_df = pd.DataFrame(self.groups_info)
@@ -1544,29 +1544,29 @@ class StreamlitAlertAnalyzer:
             groups_df['duration_hours'] = groups_df['duration_hours'].round(2)
             groups_df.columns = ['ID Grupo', 'Tamanho', 'Início', 'Fim', 'Duração (h)']
             st.dataframe(groups_df, use_container_width=True)
-        
+
         st.subheader("📈 Gráfico de Linhas: Alertas ao Longo do Tempo")
-        
+
         df_daily = self.df.groupby(['date', 'is_isolated']).size().reset_index(name='count')
         df_daily_pivot = df_daily.pivot(index='date', columns='is_isolated', values='count').fillna(0)
-        
+
         # CORREÇÃO: Verificar quais colunas existem e renomear adequadamente
         new_column_names = {}
         if False in df_daily_pivot.columns:
             new_column_names[False] = 'Agrupados'
         if True in df_daily_pivot.columns:
             new_column_names[True] = 'Isolados'
-        
+
         df_daily_pivot = df_daily_pivot.rename(columns=new_column_names)
-        
+
         # Garantir que ambas as colunas existam (mesmo que com valores zero)
         if 'Agrupados' not in df_daily_pivot.columns:
             df_daily_pivot['Agrupados'] = 0
         if 'Isolados' not in df_daily_pivot.columns:
             df_daily_pivot['Isolados'] = 0
-        
+
         fig_timeline = go.Figure()
-        
+
         fig_timeline.add_trace(go.Scatter(
             x=df_daily_pivot.index,
             y=df_daily_pivot['Isolados'],
@@ -1577,7 +1577,7 @@ class StreamlitAlertAnalyzer:
             fill='tozeroy',
             fillcolor='rgba(255, 68, 68, 0.3)'
         ))
-        
+
         fig_timeline.add_trace(go.Scatter(
             x=df_daily_pivot.index,
             y=df_daily_pivot['Agrupados'],
@@ -1588,7 +1588,7 @@ class StreamlitAlertAnalyzer:
             fill='tozeroy',
             fillcolor='rgba(68, 255, 68, 0.3)'
         ))
-        
+
         fig_timeline.update_layout(
             title="Evolução Diária: Alertas Isolados vs Agrupados",
             xaxis_title="Data",
@@ -1596,9 +1596,9 @@ class StreamlitAlertAnalyzer:
             hovermode='x unified',
             height=400
         )
-        
+
         st.plotly_chart(fig_timeline, use_container_width=True, key='individual_line_chart')
-    
+
         # ... resto do código continua igual
     
         tab1, tab2, tab3 = st.tabs(["🔴 Ocorrências Isoladas", "🟢 Ocorrências Agrupadas", "📊 Visualização Temporal"])
@@ -1667,6 +1667,422 @@ class StreamlitAlertAnalyzer:
                 hovermode='closest'
             )
             st.plotly_chart(fig, use_container_width=True, key='individual_alert_timeline')
+
+    # ADICIONE ESTE MÉTODO DENTRO DA CLASSE StreamlitAlertAnalyzer
+# Substitua o método analyze_advanced_recurrence_patterns existente
+
+    def show_advanced_recurrence_analysis(self):
+        """
+        Método corrigido para análise avançada de recorrência individual.
+        Deve ser chamado em uma tab da análise individual.
+        """
+        st.header(f"🔬 Análise Avançada de Recorrência - Alert ID: {self.alert_id}")
+
+        if self.df is None or len(self.df) == 0:
+            st.warning("⚠️ Sem dados para análise")
+            return
+
+        df = self.df.copy()
+
+        # ============================================================
+        # 1. ANÁLISE POR MINUTO (GRANULARIDADE MÁXIMA)
+        # ============================================================
+        st.subheader("🕐 Padrão por Minuto do Dia")
+
+        df['hour_minute'] = df['created_on'].dt.hour * 60 + df['created_on'].dt.minute
+        minute_dist = df['hour_minute'].value_counts().sort_index()
+
+        # Identificar top 10 minutos
+        top_10_minutes = minute_dist.nlargest(10)
+        total_top_10 = top_10_minutes.sum()
+        pct_top_10 = (total_top_10 / len(df)) * 100
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            top_minute = top_10_minutes.index[0]
+            st.metric("🎯 Minuto Mais Frequente", 
+                     f"{top_minute//60:02d}:{top_minute%60:02d}",
+                     f"{top_10_minutes.values[0]} alertas")
+        with col2:
+            st.metric("📊 Top 10 Minutos", f"{pct_top_10:.1f}%",
+                     f"{total_top_10} alertas")
+        with col3:
+            unique_minutes = len(minute_dist)
+            st.metric("🔢 Minutos Únicos", unique_minutes,
+                     f"de 1440 possíveis")
+
+        # Gráfico de distribuição por minuto (agregado por hora)
+        df['hour_bin'] = df['hour_minute'] // 60
+        hourly_counts = df.groupby('hour_bin').size()
+
+        fig_minutes = go.Figure()
+        fig_minutes.add_trace(go.Scatter(
+            x=hourly_counts.index,
+            y=hourly_counts.values,
+            mode='lines+markers',
+            fill='tozeroy',
+            name='Alertas por hora'
+        ))
+        fig_minutes.update_layout(
+            title="Distribuição Temporal (agregada por hora)",
+            xaxis_title="Hora do Dia",
+            yaxis_title="Quantidade de Alertas",
+            height=300
+        )
+        st.plotly_chart(fig_minutes, use_container_width=True, key='adv_minutes_dist')
+
+        with st.expander("🔝 Top 20 Minutos Mais Frequentes"):
+            top_20 = minute_dist.nlargest(20)
+            minute_data = []
+            for minute, count in top_20.items():
+                pct = (count / len(df)) * 100
+                minute_data.append({
+                    'Horário': f"{minute//60:02d}:{minute%60:02d}",
+                    'Alertas': count,
+                    '% do Total': f"{pct:.2f}%"
+                })
+            st.dataframe(pd.DataFrame(minute_data), use_container_width=True)
+
+        # ============================================================
+        # 2. ANÁLISE POR HORA COM DETECÇÃO DE PADRÕES
+        # ============================================================
+        st.markdown("---")
+        st.subheader("⏰ Análise Detalhada por Hora")
+
+        hourly_dist = df['hour'].value_counts().sort_index()
+        hourly_pct = (hourly_dist / len(df) * 100).round(2)
+
+        # Calcular estatísticas
+        mean_per_hour = hourly_dist.mean()
+        std_per_hour = hourly_dist.std()
+        cv_hourly = (std_per_hour / mean_per_hour) if mean_per_hour > 0 else 0
+
+        # Detectar padrões
+        top_3_hours = hourly_pct.nlargest(3)
+        top_5_hours = hourly_pct.nlargest(5)
+        pct_top_3 = top_3_hours.sum()
+        pct_top_5 = top_5_hours.sum()
+
+        # Classificar padrão horário
+        if pct_top_3 > 70:
+            pattern_hourly = "🔴 ALTAMENTE CONCENTRADO"
+            pattern_desc = "Alertas extremamente concentrados em poucos horários"
+        elif pct_top_3 > 50:
+            pattern_hourly = "🟠 MUITO CONCENTRADO"
+            pattern_desc = "Forte concentração em horários específicos"
+        elif pct_top_5 > 50:
+            pattern_hourly = "🟡 MODERADAMENTE CONCENTRADO"
+            pattern_desc = "Concentração moderada em alguns horários"
+        elif cv_hourly < 0.3:
+            pattern_hourly = "🟢 UNIFORME"
+            pattern_desc = "Distribuição uniforme ao longo do dia"
+        else:
+            pattern_hourly = "🔵 DISTRIBUÍDO"
+            pattern_desc = "Bem distribuído com variação normal"
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📊 Padrão Identificado", pattern_hourly)
+        with col2:
+            st.metric("🎯 Top 3 Horas", f"{pct_top_3:.1f}%")
+        with col3:
+            st.metric("📈 Top 5 Horas", f"{pct_top_5:.1f}%")
+        with col4:
+            st.metric("📉 Coef. Variação", f"{cv_hourly:.3f}")
+
+        st.info(f"**Interpretação:** {pattern_desc}")
+
+        # Gráfico de barras com destaque
+        fig_hourly = go.Figure()
+        colors = ['red' if i in top_3_hours.index else 'lightblue' for i in hourly_dist.index]
+        fig_hourly.add_trace(go.Bar(
+            x=hourly_dist.index,
+            y=hourly_dist.values,
+            marker_color=colors,
+            text=hourly_pct.values,
+            texttemplate='%{text:.1f}%',
+            textposition='outside',
+            hovertemplate='Hora: %{x}:00<br>Alertas: %{y}<br>%{text}<extra></extra>'
+        ))
+        fig_hourly.update_layout(
+            title="Distribuição por Hora (Top 3 em vermelho)",
+            xaxis_title="Hora",
+            yaxis_title="Quantidade",
+            height=400,
+            showlegend=False
+        )
+        st.plotly_chart(fig_hourly, use_container_width=True, key='adv_hourly_dist')
+
+        # Análise de períodos do dia
+        st.write("**📊 Análise por Períodos do Dia:**")
+        periods = {
+            'Madrugada (00-05h)': df[df['hour'].between(0, 5)],
+            'Manhã (06-11h)': df[df['hour'].between(6, 11)],
+            'Tarde (12-17h)': df[df['hour'].between(12, 17)],
+            'Noite (18-23h)': df[df['hour'].between(18, 23)]
+        }
+
+        period_data = []
+        for period_name, period_df in periods.items():
+            count = len(period_df)
+            pct = (count / len(df)) * 100
+            period_data.append({
+                'Período': period_name,
+                'Alertas': count,
+                '% do Total': f"{pct:.1f}%"
+            })
+
+        period_df_display = pd.DataFrame(period_data)
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            st.dataframe(period_df_display, use_container_width=True)
+        with col2:
+            fig_periods = px.pie(period_df_display, values='Alertas', names='Período',
+                                title="Distribuição por Período")
+            st.plotly_chart(fig_periods, use_container_width=True, key='adv_periods')
+
+        # ============================================================
+        # 3. ANÁLISE POR DIA DA SEMANA
+        # ============================================================
+        st.markdown("---")
+        st.subheader("📅 Análise Detalhada por Dia da Semana")
+
+        days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        day_translation = {
+            'Monday': 'Segunda', 'Tuesday': 'Terça', 'Wednesday': 'Quarta',
+            'Thursday': 'Quinta', 'Friday': 'Sexta', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
+        }
+
+        daily_dist = df['day_name'].value_counts().reindex(days_order).fillna(0)
+        daily_pct = (daily_dist / len(df) * 100).round(2)
+
+        # Estatísticas
+        mean_per_day = daily_dist.mean()
+        std_per_day = daily_dist.std()
+        cv_daily = (std_per_day / mean_per_day) if mean_per_day > 0 else 0
+
+        top_3_days = daily_pct.nlargest(3)
+        pct_top_3_days = top_3_days.sum()
+
+        # Análise fim de semana vs dias úteis
+        weekday_count = daily_dist[['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']].sum()
+        weekend_count = daily_dist[['Saturday', 'Sunday']].sum()
+        weekday_pct = (weekday_count / len(df)) * 100
+        weekend_pct = (weekend_count / len(df)) * 100
+
+        # Classificar padrão semanal
+        if pct_top_3_days > 70:
+            pattern_weekly = "🔴 ALTAMENTE CONCENTRADO"
+            pattern_desc_weekly = "Concentração extrema em poucos dias"
+        elif pct_top_3_days > 50:
+            pattern_weekly = "🟠 CONCENTRADO"
+            pattern_desc_weekly = "Forte concentração em dias específicos"
+        elif weekend_pct > 40:
+            pattern_weekly = "🔵 PADRÃO FIM DE SEMANA"
+            pattern_desc_weekly = "Alta atividade em fins de semana"
+        elif weekday_pct > 85:
+            pattern_weekly = "💼 PADRÃO DIAS ÚTEIS"
+            pattern_desc_weekly = "Predominante em dias úteis"
+        elif cv_daily < 0.2:
+            pattern_weekly = "🟢 UNIFORME"
+            pattern_desc_weekly = "Distribuição uniforme na semana"
+        else:
+            pattern_weekly = "🔵 DISTRIBUÍDO"
+            pattern_desc_weekly = "Distribuição variada"
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📊 Padrão Semanal", pattern_weekly)
+        with col2:
+            st.metric("🎯 Top 3 Dias", f"{pct_top_3_days:.1f}%")
+        with col3:
+            st.metric("💼 Dias Úteis", f"{weekday_pct:.1f}%")
+        with col4:
+            st.metric("🗓️ Fins de Semana", f"{weekend_pct:.1f}%")
+
+        st.info(f"**Interpretação:** {pattern_desc_weekly}")
+
+        # Gráfico
+        daily_pct_pt = daily_pct.rename(index=day_translation)
+        colors_daily = ['red' if day in [day_translation[d] for d in top_3_days.index] else 'lightgreen' 
+                        for day in daily_pct_pt.index]
+
+        fig_daily = go.Figure()
+        fig_daily.add_trace(go.Bar(
+            x=list(daily_pct_pt.index),
+            y=daily_dist.values,
+            marker_color=colors_daily,
+            text=daily_pct_pt.values,
+            texttemplate='%{text:.1f}%',
+            textposition='outside'
+        ))
+        fig_daily.update_layout(
+            title="Distribuição por Dia da Semana (Top 3 em vermelho)",
+            xaxis_title="Dia",
+            yaxis_title="Quantidade",
+            height=400
+        )
+        st.plotly_chart(fig_daily, use_container_width=True, key='adv_daily_dist')
+
+        # ============================================================
+        # 4. ANÁLISE POR DIA DO MÊS
+        # ============================================================
+        st.markdown("---")
+        st.subheader("📆 Análise por Dia do Mês")
+
+        df['day_of_month'] = df['created_on'].dt.day
+        dom_dist = df['day_of_month'].value_counts().sort_index()
+        dom_pct = (dom_dist / len(df) * 100).round(2)
+
+        top_5_dom = dom_pct.nlargest(5)
+        pct_top_5_dom = top_5_dom.sum()
+
+        # Detectar padrões mensais
+        inicio_mes = dom_dist[dom_dist.index <= 5].sum()
+        meio_mes = dom_dist[dom_dist.index.isin(range(11, 21))].sum()
+        fim_mes = dom_dist[dom_dist.index >= 26].sum()
+
+        inicio_pct = (inicio_mes / len(df)) * 100
+        meio_pct = (meio_mes / len(df)) * 100
+        fim_pct = (fim_mes / len(df)) * 100
+
+        if fim_pct > 30:
+            pattern_monthly = "📅 PADRÃO FIM DO MÊS"
+            pattern_desc_monthly = "Concentração no fim do mês"
+        elif inicio_pct > 30:
+            pattern_monthly = "📅 PADRÃO INÍCIO DO MÊS"
+            pattern_desc_monthly = "Concentração no início do mês"
+        elif meio_pct > 30:
+            pattern_monthly = "📅 PADRÃO MEIO DO MÊS"
+            pattern_desc_monthly = "Concentração no meio do mês"
+        elif pct_top_5_dom > 40:
+            pattern_monthly = "🟡 DIAS ESPECÍFICOS"
+            pattern_desc_monthly = "Concentração em dias específicos do mês"
+        else:
+            pattern_monthly = "🟢 DISTRIBUÍDO"
+            pattern_desc_monthly = "Sem padrão mensal claro"
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📊 Padrão Mensal", pattern_monthly)
+        with col2:
+            st.metric("📅 Início (1-5)", f"{inicio_pct:.1f}%")
+        with col3:
+            st.metric("📅 Meio (11-20)", f"{meio_pct:.1f}%")
+        with col4:
+            st.metric("📅 Fim (26+)", f"{fim_pct:.1f}%")
+
+        st.info(f"**Interpretação:** {pattern_desc_monthly}")
+
+        fig_dom = go.Figure()
+        colors_dom = ['red' if i in top_5_dom.index else 'lightcoral' for i in dom_dist.index]
+        fig_dom.add_trace(go.Bar(
+            x=dom_dist.index,
+            y=dom_dist.values,
+            marker_color=colors_dom,
+            hovertemplate='Dia: %{x}<br>Alertas: %{y}<extra></extra>'
+        ))
+        fig_dom.update_layout(
+            title="Distribuição por Dia do Mês (Top 5 em vermelho)",
+            xaxis_title="Dia do Mês",
+            yaxis_title="Quantidade",
+            height=400
+        )
+        st.plotly_chart(fig_dom, use_container_width=True, key='adv_dom_dist')
+
+        # ============================================================
+        # 5. MAPA DE CALOR E HOTSPOTS
+        # ============================================================
+        st.markdown("---")
+        st.subheader("🔥 Mapa de Calor e Hotspots")
+
+        # Identificar os 10 maiores hotspots
+        st.write("**🔥 Top 10 Hotspots (Hora + Dia):**")
+        hotspot_data = []
+        day_map = {0: 'Seg', 1: 'Ter', 2: 'Qua', 3: 'Qui', 4: 'Sex', 5: 'Sáb', 6: 'Dom'}
+
+        for _, row in df.iterrows():
+            day_idx = row['day_of_week']
+            hour = row['hour']
+            hotspot_data.append({
+                'Dia': day_map[day_idx],
+                'Hora': hour,
+                'Count': 1
+            })
+
+        hotspot_df = pd.DataFrame(hotspot_data).groupby(['Dia', 'Hora']).sum().reset_index()
+        hotspot_df['% Total'] = (hotspot_df['Count'] / len(df) * 100).round(2)
+        hotspot_df = hotspot_df.sort_values('Count', ascending=False).head(10)
+        hotspot_df['Hora'] = hotspot_df['Hora'].apply(lambda x: f"{x:02d}:00")
+        hotspot_df.columns = ['Dia', 'Hora', 'Alertas', '% Total']
+        hotspot_df['% Total'] = hotspot_df['% Total'].astype(str) + '%'
+        st.dataframe(hotspot_df, use_container_width=True)
+
+        # ============================================================
+        # 6. RESUMO FINAL E CLASSIFICAÇÃO
+        # ============================================================
+        st.markdown("---")
+        st.header("🎯 RESUMO FINAL DO PADRÃO DE RECORRÊNCIA")
+
+        # Calcular score de concentração geral
+        concentration_score = (pct_top_3 * 0.4 + pct_top_3_days * 0.3 + pct_top_5_dom * 0.3)
+
+        if concentration_score > 60:
+            overall_pattern = "🔴 PADRÃO ALTAMENTE PREVISÍVEL"
+            overall_desc = "Forte concentração temporal - alto potencial de automação"
+            automation_potential = "ALTO"
+        elif concentration_score > 40:
+            overall_pattern = "🟡 PADRÃO MODERADAMENTE PREVISÍVEL"
+            overall_desc = "Padrão identificável com alguma variação"
+            automation_potential = "MÉDIO"
+        else:
+            overall_pattern = "🟢 PADRÃO VARIÁVEL/DISTRIBUÍDO"
+            overall_desc = "Distribuição ampla sem forte concentração"
+            automation_potential = "BAIXO"
+
+        st.success(f"### {overall_pattern}")
+        st.info(overall_desc)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Score de Concentração", f"{concentration_score:.1f}/100")
+        with col2:
+            st.metric("Potencial de Automação", automation_potential)
+        with col3:
+            st.metric("Alertas Analisados", len(df))
+
+        # Tabela resumo
+        st.write("**📊 Resumo dos Padrões Identificados:**")
+        summary_data = {
+            'Dimensão': ['Hora do Dia', 'Dia da Semana', 'Dia do Mês', 'Minuto Específico'],
+            'Padrão': [pattern_hourly, pattern_weekly, pattern_monthly, 
+                       f"Top 10: {pct_top_10:.1f}%"],
+            'Principal': [
+                f"{top_3_hours.index[0]:02d}:00 ({top_3_hours.values[0]:.1f}%)",
+                f"{day_translation[top_3_days.index[0]]} ({top_3_days.values[0]:.1f}%)",
+                f"Dia {top_5_dom.index[0]} ({top_5_dom.values[0]:.1f}%)",
+                f"{top_minute//60:02d}:{top_minute%60:02d} ({top_10_minutes.values[0]} alertas)"
+            ]
+        }
+        st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+
+        # Recomendações
+        st.markdown("---")
+        st.subheader("💡 Recomendações Baseadas nos Padrões")
+
+        if concentration_score > 60:
+            st.success("✅ **Alta Previsibilidade Detectada:**")
+            st.write("• Implementar janelas de manutenção preventiva nos horários de pico")
+            st.write("• Considerar automação de resposta para padrões recorrentes")
+            st.write(f"• Focar atenção em: {day_translation[top_3_days.index[0]]} às {top_3_hours.index[0]:02d}:00")
+        elif concentration_score > 40:
+            st.warning("⚠️ **Padrão Moderado Detectado:**")
+            st.write("• Monitorar horários de maior incidência")
+            st.write("• Avaliar causas subjacentes aos padrões identificados")
+        else:
+            st.info("ℹ️ **Padrão Distribuído:**")
+            st.write("• Alertas bem distribuídos - baixa previsibilidade temporal")
+            st.write("• Focar em análise de causa raiz ao invés de padrões temporais")
 
     def show_temporal_patterns(self):
         st.header("⏰ Padrões Temporais")
@@ -1898,12 +2314,6 @@ class StreamlitAlertAnalyzer:
                 st.metric("📈 Próximo (Mediana)", next_median.strftime("%d/%m %H:%M"))
             st.info(f"💡 **Baseado em:** Intervalo médio de {avg_interval:.1f}h e mediana de {median_interval:.1f}h")
 
-
-
-# ============================================================
-# FUNÇÃO MAIN
-# ============================================================
-
 def main():
     st.title("🚨 Analisador de Alertas")
     st.markdown("### Análise individual, global e agrupamento inteligente de alertas")
@@ -2012,11 +2422,12 @@ def main():
                         if analyzer.prepare_individual_analysis(selected_id):
                             st.success(f"🎯 Analisando alert_id: {selected_id} ({len(analyzer.df)} registros)")
                             st.info(f"📅 **Período analisado:** {analyzer.dates.min()} até {analyzer.dates.max()}")
-                            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+                            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
                                 "🔍 Isolados vs Agrupados",
                                 "📊 Básico", 
                                 "⏰ Temporais", 
                                 "🔁 Recorrência",
+                                "🔬 Análise Avançada de Recorrência",
                                 "💥 Rajadas", 
                                 "📈 Tendências", 
                                 "🚨 Anomalias", 
@@ -2031,12 +2442,14 @@ def main():
                             with tab4:
                                 analyzer.analyze_individual_recurrence_patterns()
                             with tab5:
-                                analyzer.show_burst_analysis()
+                                analyzer.show_advanced_recurrence_analysis()
                             with tab6:
-                                analyzer.show_trend_analysis()
+                                analyzer.show_burst_analysis()
                             with tab7:
-                                analyzer.show_anomaly_detection()
+                                analyzer.show_trend_analysis()
                             with tab8:
+                                analyzer.show_anomaly_detection()
+                            with tab9:
                                 analyzer.show_predictions()
                             st.sidebar.markdown("---")
                             st.sidebar.subheader("📥 Download")
