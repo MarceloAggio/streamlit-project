@@ -1549,8 +1549,17 @@ class StreamlitAlertAnalyzer:
         
         df_daily = self.df.groupby(['date', 'is_isolated']).size().reset_index(name='count')
         df_daily_pivot = df_daily.pivot(index='date', columns='is_isolated', values='count').fillna(0)
-        df_daily_pivot.columns = ['Agrupados', 'Isolados'] if False in df_daily_pivot.columns else ['Isolados']
         
+        # CORREÇÃO: Verificar quais colunas existem e renomear adequadamente
+        new_column_names = {}
+        if False in df_daily_pivot.columns:
+            new_column_names[False] = 'Agrupados'
+        if True in df_daily_pivot.columns:
+            new_column_names[True] = 'Isolados'
+        
+        df_daily_pivot = df_daily_pivot.rename(columns=new_column_names)
+        
+        # Garantir que ambas as colunas existam (mesmo que com valores zero)
         if 'Agrupados' not in df_daily_pivot.columns:
             df_daily_pivot['Agrupados'] = 0
         if 'Isolados' not in df_daily_pivot.columns:
@@ -1589,6 +1598,8 @@ class StreamlitAlertAnalyzer:
         )
         
         st.plotly_chart(fig_timeline, use_container_width=True, key='individual_line_chart')
+    
+        # ... resto do código continua igual
     
         tab1, tab2, tab3 = st.tabs(["🔴 Ocorrências Isoladas", "🟢 Ocorrências Agrupadas", "📊 Visualização Temporal"])
     
