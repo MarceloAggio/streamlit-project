@@ -2408,20 +2408,29 @@ def main():
                         st.error("❌ Não foi possível processar os dados para análise global")
             else:
                 try:
-                    unique_ids = analyzer.df_original['u_alert_id'].unique()
-                    selected_id = st.sidebar.selectbox(
+                    id_counts = analyzer.df_original['u_alert_id'].value_counts()
+
+                    id_options = [f"{uid} ({count} ocorrências)" for uid, count in id_counts.items()]
+
+                    # Cria o selectbox no sidebar
+                    selected_option = st.sidebar.selectbox(
                         "🎯 Selecione o Alert ID",
-                        unique_ids,
-                        help="Escolha o ID do alerta para análise"
+                        id_options,
+                        help="Escolha o ID do alerta para análise (ordenado por frequência)"
                     )
+
+                    # Extrai o ID puro (antes do parêntese)
+                    selected_id = selected_option.split(" ")[0]
+
                     if st.sidebar.button("🚀 Executar Análise Individual", type="primary"):
                         analyzer.max_gap_hours = max_gap_hours
                         analyzer.min_group_size = min_group_size
                         analyzer.spike_threshold_multiplier = spike_threshold_multiplier
-                        
+
                         if analyzer.prepare_individual_analysis(selected_id):
                             st.success(f"🎯 Analisando alert_id: {selected_id} ({len(analyzer.df)} registros)")
                             st.info(f"📅 **Período analisado:** {analyzer.dates.min()} até {analyzer.dates.max()}")
+
                             tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
                                 "🔍 Isolados vs Agrupados",
                                 "📊 Básico", 
@@ -2433,6 +2442,7 @@ def main():
                                 "🚨 Anomalias", 
                                 "🔮 Previsões"
                             ])
+
                             with tab1:
                                 analyzer.show_individual_alert_analysis()
                             with tab2:
@@ -2451,8 +2461,10 @@ def main():
                                 analyzer.show_anomaly_detection()
                             with tab9:
                                 analyzer.show_predictions()
+
                             st.sidebar.markdown("---")
                             st.sidebar.subheader("📥 Download")
+
                             csv_buffer = io.StringIO()
                             analyzer.df.to_csv(csv_buffer, index=False)
                             st.sidebar.download_button(
