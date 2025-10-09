@@ -1,0 +1,30 @@
+{
+    "colunas_esperadas": [
+        "codigo",
+        "nome",
+        "quantidade"
+    ],
+    "colunas_alternativas": {
+        "codigo": [
+            "código",
+            "cod",
+            "sku",
+            "isbn",
+            "code"
+        ],
+        "nome": [
+            "título",
+            "titulo",
+            "livro",
+            "produto",
+            "descricao",
+            "descrição"
+        ],
+        "quantidade": [
+            "qtd",
+            "qtde",
+            "quant",
+            "qty"
+        ]
+    }
+}

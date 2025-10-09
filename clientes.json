@@ -1,0 +1,17 @@
+{
+    "Leitura": {
+        "codigo": "LT001",
+        "cnpj": "00.000.000/0001-00",
+        "email": "contato@leitura.com.br"
+    },
+    "Catavento": {
+        "codigo": "CV002",
+        "cnpj": "11.111.111/0001-11",
+        "email": "contato@catavento.com.br"
+    },
+    "Livraria da Vila": {
+        "codigo": "LV003",
+        "cnpj": "22.222.222/0001-22",
+        "email": "contato@livrariadavila.com.br"
+    }
+}

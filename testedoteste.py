@@ -2277,6 +2277,7 @@ class StreamlitAlertAnalyzer:
         # ============================================================
         st.subheader("🔀 13. Detecção de Pontos de Mudança")
         
+        has_change_points = False
         if len(intervals_hours) >= 20:
             # Usar CUSUM para detectar mudanças
             cumsum = np.cumsum(intervals_hours - np.mean(intervals_hours))
@@ -2299,6 +2300,8 @@ class StreamlitAlertAnalyzer:
             for cp in change_points:
                 if not filtered_change_points or cp - filtered_change_points[-1] > 5:
                     filtered_change_points.append(cp)
+            
+            has_change_points = len(filtered_change_points) > 0
             
             if filtered_change_points:
                 st.warning(f"⚠️ **{len(filtered_change_points)} pontos de mudança detectados**")
@@ -2359,6 +2362,277 @@ class StreamlitAlertAnalyzer:
                         st.info("🔄 **Padrão variável:** Mudanças não monotônicas")
             else:
                 st.success("✅ Sem pontos de mudança significativos - comportamento estável")
+        
+        # ============================================================
+        # 14. CLASSIFICAÇÃO DEFINITIVA: REINCIDENTE vs NÃO REINCIDENTE
+        # ============================================================
+        st.markdown("---")
+        st.header("🎯 14. CLASSIFICAÇÃO FINAL: ALERTA REINCIDENTE?")
+        
+        # Coletar todas as métricas calculadas
+        reincidence_criteria = {}
+        reincidence_points = 0
+        max_points = 0
+        justifications = []
+        
+        # CRITÉRIO 1: Regularidade dos Intervalos (CV)
+        max_points += 20
+        if cv < 0.35:
+            reincidence_points += 20
+            reincidence_criteria['regularidade'] = 'ALTA'
+            justifications.append("✅ **Intervalos muito regulares** (CV < 0.35)")
+        elif cv < 0.65:
+            reincidence_points += 12
+            reincidence_criteria['regularidade'] = 'MODERADA'
+            justifications.append("🟡 **Intervalos moderadamente regulares** (CV < 0.65)")
+        else:
+            reincidence_points += 0
+            reincidence_criteria['regularidade'] = 'BAIXA'
+            justifications.append("❌ **Intervalos irregulares** (CV >= 0.65)")
+        
+        # CRITÉRIO 2: Score de Recorrência Global
+        max_points += 20
+        if recurrence_score >= 75:
+            reincidence_points += 20
+            reincidence_criteria['score_recorrencia'] = 'ALTO'
+            justifications.append(f"✅ **Score de recorrência alto** ({recurrence_score}/100)")
+        elif recurrence_score >= 50:
+            reincidence_points += 12
+            reincidence_criteria['score_recorrencia'] = 'MODERADO'
+            justifications.append(f"🟡 **Score de recorrência moderado** ({recurrence_score}/100)")
+        else:
+            reincidence_points += 0
+            reincidence_criteria['score_recorrencia'] = 'BAIXO'
+            justifications.append(f"❌ **Score de recorrência baixo** ({recurrence_score}/100)")
+        
+        # CRITÉRIO 3: Periodicidade Detectada (FFT)
+        max_points += 15
+        if 'dominant_periods' in locals() and len(dominant_periods) > 0:
+            reincidence_points += 15
+            reincidence_criteria['periodicidade'] = 'SIM'
+            justifications.append("✅ **Periodicidade clara detectada** (via FFT)")
+        else:
+            reincidence_points += 0
+            reincidence_criteria['periodicidade'] = 'NÃO'
+            justifications.append("❌ **Sem periodicidade detectável**")
+        
+        # CRITÉRIO 4: Autocorrelação Significativa
+        max_points += 15
+        if 'significant_peaks' in locals() and significant_peaks:
+            reincidence_points += 15
+            reincidence_criteria['autocorrelacao'] = 'SIM'
+            justifications.append("✅ **Autocorrelação significativa** (padrão repetitivo)")
+        else:
+            reincidence_points += 0
+            reincidence_criteria['autocorrelacao'] = 'NÃO'
+            justifications.append("❌ **Sem autocorrelação significativa**")
+        
+        # CRITÉRIO 5: Concentração Temporal (Hora/Dia)
+        max_points += 15
+        concentration_detected = False
+        
+        # Calcular concentração horária se ainda não foi calculada
+        if 'total_top_3_hours' not in locals():
+            hourly_dist = df_sorted['hour'].value_counts().sort_index()
+            if len(hourly_dist) > 0:
+                hourly_pct = (hourly_dist / hourly_dist.sum() * 100).round(2)
+                top_3_hours = hourly_pct.nlargest(3)
+                total_top_3_hours = top_3_hours.sum()
+            else:
+                total_top_3_hours = 0
+        
+        # Calcular concentração semanal se ainda não foi calculada
+        if 'total_top_3_days' not in locals():
+            daily_dist = df_sorted['day_name'].value_counts()
+            if len(daily_dist) > 0:
+                days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                daily_dist_ordered = daily_dist.reindex(days_order).fillna(0)
+                daily_pct = (daily_dist_ordered / daily_dist_ordered.sum() * 100).round(2)
+                top_3_days = daily_pct.nlargest(3)
+                total_top_3_days = top_3_days.sum()
+            else:
+                total_top_3_days = 0
+        
+        # Avaliar concentração
+        if total_top_3_hours > 50:
+            concentration_detected = True
+            justifications.append(f"✅ **Concentração horária forte** ({total_top_3_hours:.0f}% em top 3 horas)")
+        if total_top_3_days > 50:
+            concentration_detected = True
+            justifications.append(f"✅ **Concentração semanal forte** ({total_top_3_days:.0f}% em top 3 dias)")
+        
+        if concentration_detected:
+            reincidence_points += 15
+            reincidence_criteria['concentracao_temporal'] = 'ALTA'
+        else:
+            reincidence_points += 0
+            reincidence_criteria['concentracao_temporal'] = 'BAIXA'
+            justifications.append("❌ **Sem concentração temporal clara**")
+        
+        # CRITÉRIO 6: Entropia (Previsibilidade)
+        max_points += 10
+        if 'normalized_entropy' in locals():
+            if normalized_entropy < 0.5:
+                reincidence_points += 10
+                reincidence_criteria['previsibilidade'] = 'ALTA'
+                justifications.append("✅ **Alta previsibilidade** (baixa entropia)")
+            elif normalized_entropy < 0.7:
+                reincidence_points += 5
+                reincidence_criteria['previsibilidade'] = 'MODERADA'
+                justifications.append("🟡 **Previsibilidade moderada**")
+            else:
+                reincidence_points += 0
+                reincidence_criteria['previsibilidade'] = 'BAIXA'
+                justifications.append("❌ **Baixa previsibilidade** (alta entropia)")
+        
+        # CRITÉRIO 7: Ausência de Bursts Irregulares
+        max_points += 5
+        if 'burst_sequences' in locals():
+            if len(burst_sequences) == 0:
+                reincidence_points += 5
+                reincidence_criteria['bursts'] = 'AUSENTE'
+                justifications.append("✅ **Sem padrão de rajadas** (distribuição uniforme)")
+            else:
+                reincidence_points += 0
+                reincidence_criteria['bursts'] = 'PRESENTE'
+                justifications.append("❌ **Padrão de rajadas detectado** (comportamento irregular)")
+        
+        # Calcular percentual final
+        reincidence_percentage = (reincidence_points / max_points) * 100 if max_points > 0 else 0
+        
+        # REGRA DE CLASSIFICAÇÃO FINAL
+        st.subheader("📊 Resultado da Análise")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Determinar classificação
+            if reincidence_percentage >= 70:
+                classification = "🔴 ALERTA REINCIDENTE"
+                classification_level = "ALTA"
+                color = "red"
+                recommendation = """
+                **Este alerta apresenta forte padrão de reincidência.**
+                
+                **Ações Recomendadas:**
+                - ✅ Implementar automação de resposta
+                - ✅ Criar runbook detalhado
+                - ✅ Considerar supressão inteligente em horários previsíveis
+                - ✅ Investigar causa raiz para correção definitiva
+                - ✅ Monitorar desvios do padrão esperado
+                """
+            elif reincidence_percentage >= 50:
+                classification = "🟠 ALERTA PARCIALMENTE REINCIDENTE"
+                classification_level = "MODERADA"
+                color = "orange"
+                recommendation = """
+                **Este alerta apresenta padrão moderado de reincidência.**
+                
+                **Ações Recomendadas:**
+                - 🔍 Investigar causas múltiplas possíveis
+                - 📊 Monitorar evolução do padrão
+                - ⚙️ Considerar automação parcial
+                - 🎯 Focar em períodos de maior concentração
+                """
+            else:
+                classification = "🟢 ALERTA NÃO REINCIDENTE"
+                classification_level = "BAIXA"
+                color = "green"
+                recommendation = """
+                **Este alerta NÃO apresenta padrão consistente de reincidência.**
+                
+                **Ações Recomendadas:**
+                - 🔍 Análise caso a caso necessária
+                - ❓ Investigar se são falsos positivos
+                - 🔧 Revisar configuração do alerta
+                - 📉 Considerar desativação se pouco relevante
+                - 🎯 Tratar cada ocorrência individualmente
+                """
+            
+            # Mostrar classificação com destaque
+            st.markdown(f"### {classification}")
+            st.markdown(f"**Nível de Reincidência:** {classification_level}")
+            st.markdown(f"**Score:** {reincidence_percentage:.1f}% ({reincidence_points}/{max_points} pontos)")
+            
+            st.markdown("---")
+            st.markdown("#### 📋 Justificativas:")
+            for justification in justifications:
+                st.markdown(f"- {justification}")
+            
+            st.markdown("---")
+            st.markdown("#### 💡 Recomendações:")
+            st.info(recommendation)
+        
+        with col2:
+            # Gauge visual
+            fig_final = go.Figure(go.Indicator(
+                mode = "gauge+number+delta",
+                value = reincidence_percentage,
+                title = {'text': "Score de Reincidência", 'font': {'size': 20}},
+                delta = {'reference': 50, 'increasing': {'color': "red"}},
+                gauge = {
+                    'axis': {'range': [0, 100]},
+                    'bar': {'color': color},
+                    'steps': [
+                        {'range': [0, 50], 'color': "lightgray"},
+                        {'range': [50, 70], 'color': "lightyellow"},
+                        {'range': [70, 100], 'color': "lightcoral"}
+                    ],
+                    'threshold': {
+                        'line': {'color': "darkred", 'width': 4},
+                        'thickness': 0.75,
+                        'value': 70
+                    }
+                }
+            ))
+            fig_final.update_layout(height=400)
+            st.plotly_chart(fig_final, use_container_width=True, key='reincidence_gauge')
+            
+            # Resumo dos critérios
+            st.markdown("#### 📊 Critérios Avaliados:")
+            criteria_status = {
+                'Regularidade': reincidence_criteria.get('regularidade', 'N/A'),
+                'Score Global': reincidence_criteria.get('score_recorrencia', 'N/A'),
+                'Periodicidade': reincidence_criteria.get('periodicidade', 'N/A'),
+                'Autocorrelação': reincidence_criteria.get('autocorrelacao', 'N/A'),
+                'Concentração': reincidence_criteria.get('concentracao_temporal', 'N/A'),
+                'Previsibilidade': reincidence_criteria.get('previsibilidade', 'N/A'),
+                'Bursts': reincidence_criteria.get('bursts', 'N/A')
+            }
+            
+            for criterion, status in criteria_status.items():
+                if status in ['ALTA', 'SIM', 'AUSENTE']:
+                    icon = "✅"
+                elif status in ['MODERADA', 'MODERADO']:
+                    icon = "🟡"
+                else:
+                    icon = "❌"
+                st.markdown(f"{icon} **{criterion}:** {status}")
+        
+        # Exportar resultado da classificação
+        st.markdown("---")
+        st.subheader("📥 Exportar Resultado")
+        
+        result_data = {
+            'alert_id': [self.alert_id],
+            'classificacao': [classification],
+            'nivel_reincidencia': [classification_level],
+            'score_percentual': [f"{reincidence_percentage:.1f}%"],
+            'pontos': [f"{reincidence_points}/{max_points}"],
+            'regularidade_cv': [f"{cv:.3f}"],
+            'score_recorrencia': [recurrence_score],
+            **{f'criterio_{k}': [v] for k, v in reincidence_criteria.items()}
+        }
+        
+        result_df = pd.DataFrame(result_data)
+        
+        csv_result = result_df.to_csv(index=False)
+        st.download_button(
+            label="⬇️ Baixar Classificação (CSV)",
+            data=csv_result,
+            file_name=f"classificacao_reincidencia_{self.alert_id}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )
 def main():
     st.title("🚨 Analisador de Alertas")
     st.markdown("### Análise individual, global e agrupamento inteligente de alertas")
