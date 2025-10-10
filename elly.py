@@ -9,8 +9,9 @@ from datetime import datetime
 import io
 import json
 import os
-import base64
-import re
+import imaplib
+import email
+from email.header import decode_header
 
 # Configuração da página
 st.set_page_config(
@@ -23,7 +24,6 @@ st.set_page_config(
 ARQUIVO_CLIENTES = "clientes.json"
 ARQUIVO_COLUNAS = "colunas_config.json"
 ARQUIVO_PEDIDOS = "pedidos.json"
-ARQUIVO_CREDENTIALS = "credentials.json"
 
 # Configurações padrão
 CLIENTES_PADRAO = {
@@ -112,8 +112,7 @@ if 'config' not in st.session_state:
         'email_remetente': '',
         'senha_email': '',
         'smtp_servidor': 'smtp.gmail.com',
-        'smtp_porta': 587,
-        'usar_gmail_api': False
+        'smtp_porta': 587
     }
 if 'clientes' not in st.session_state:
     st.session_state.clientes = carregar_clientes()
@@ -121,8 +120,6 @@ if 'config_colunas' not in st.session_state:
     st.session_state.config_colunas = carregar_config_colunas()
 if 'emails_recebidos' not in st.session_state:
     st.session_state.emails_recebidos = []
-if 'gmail_service' not in st.session_state:
-    st.session_state.gmail_service = None
 
 # Categorias de produtos
 CATEGORIAS_PRODUTO = {
@@ -131,160 +128,154 @@ CATEGORIAS_PRODUTO = {
     'Livro Geral': 'TRIBUTADO'
 }
 
-def autenticar_gmail_api(credentials_json):
-    """Autentica usando a API do Gmail"""
-    try:
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
-        from google.auth.transport.requests import Request
-        from googleapiclient.discovery import build
-        import pickle
-        import socket
-        
-        SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-        
-        creds = None
-        token_file = 'token.pickle'
-        
-        # Verificar se já existe token salvo
-        if os.path.exists(token_file):
-            with open(token_file, 'rb') as token:
-                creds = pickle.load(token)
-        
-        # Se não há credenciais válidas, fazer login
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                # Salvar credentials temporariamente
-                with open('temp_credentials.json', 'w') as f:
-                    json.dump(credentials_json, f)
-                
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    'temp_credentials.json', SCOPES)
-                
-                # Encontrar uma porta disponível
-                def encontrar_porta_disponivel():
-                    """Encontra uma porta TCP disponível"""
-                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                        s.bind(('', 0))
-                        s.listen(1)
-                        port = s.getsockname()[1]
-                    return port
-                
-                porta = encontrar_porta_disponivel()
-                st.info(f"🔌 Usando porta {porta} para autenticação")
-                
-                # Usar porta dinâmica
-                creds = flow.run_local_server(
-                    port=porta,
-                    authorization_prompt_message='Por favor, autorize este aplicativo acessando: {url}',
-                    success_message='Autenticação concluída! Você pode fechar esta janela.',
-                    open_browser=True
-                )
-                
-                # Remover arquivo temporário
-                if os.path.exists('temp_credentials.json'):
-                    os.remove('temp_credentials.json')
-            
-            # Salvar credenciais
-            with open(token_file, 'wb') as token:
-                pickle.dump(creds, token)
-        
-        service = build('gmail', 'v1', credentials=creds)
-        return service
+def ler_emails_gmail_imap(email_usuario, senha_app, max_results=50):
+    """
+    Lê emails do Gmail usando IMAP - Muito mais simples!
     
-    except ImportError:
-        st.error("❌ Biblioteca Google API não instalada. Execute: pip install google-auth-oauthlib google-auth-httplib2 google-api-python-client")
-        return None
-    except Exception as e:
-        st.error(f"❌ Erro na autenticação: {str(e)}")
-        return None
-
-def ler_emails_gmail_api(service, max_results=50):
-    """Lê emails usando Gmail API"""
+    Args:
+        email_usuario: seu email do Gmail
+        senha_app: senha de aplicativo do Gmail
+        max_results: número máximo de emails para buscar
+    """
     try:
-        # Buscar mensagens com a palavra "pedido"
-        query = 'pedido OR order OR encomenda OR solicitação'
-        results = service.users().messages().list(
-            userId='me',
-            q=query,
-            maxResults=max_results
-        ).execute()
+        st.info("🔌 Conectando ao Gmail via IMAP...")
         
-        messages = results.get('messages', [])
+        # Conectar ao servidor IMAP do Gmail
+        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        mail.login(email_usuario, senha_app)
+        mail.select("INBOX")
+        
+        # Buscar emails com "pedido" no assunto ou corpo
+        st.info("🔍 Buscando emails com pedidos...")
+        status, messages = mail.search(None, '(OR SUBJECT "pedido" BODY "pedido")')
+        
+        if status != "OK":
+            st.error("❌ Erro ao buscar emails")
+            return []
+        
+        # Pegar os IDs dos últimos N emails
+        email_ids = messages[0].split()
+        email_ids = email_ids[-max_results:] if len(email_ids) > max_results else email_ids
+        
         emails_pedidos = []
+        total = len(email_ids)
         
-        for message in messages:
+        if total == 0:
+            st.warning("📭 Nenhum email com 'pedido' encontrado")
+            mail.close()
+            mail.logout()
+            return []
+        
+        # Barra de progresso
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for idx, email_id in enumerate(email_ids):
             try:
-                # Obter detalhes da mensagem
-                msg = service.users().messages().get(
-                    userId='me',
-                    id=message['id'],
-                    format='full'
-                ).execute()
+                # Atualizar progresso
+                progress = (idx + 1) / total
+                progress_bar.progress(progress)
+                status_text.text(f"📧 Processando email {idx + 1} de {total}...")
                 
-                # Extrair headers
-                headers = msg['payload']['headers']
-                subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Sem assunto')
-                from_email = next((h['value'] for h in headers if h['name'] == 'From'), 'Desconhecido')
-                date = next((h['value'] for h in headers if h['name'] == 'Date'), '')
+                # Buscar o email
+                status, msg_data = mail.fetch(email_id, "(RFC822)")
                 
-                # Extrair corpo
-                corpo = ''
-                anexos = []
-                
-                def processar_parte(part):
-                    nonlocal corpo, anexos
-                    
-                    if 'parts' in part:
-                        for subpart in part['parts']:
-                            processar_parte(subpart)
-                    else:
-                        mime_type = part.get('mimeType', '')
+                for response_part in msg_data:
+                    if isinstance(response_part, tuple):
+                        # Parse do email
+                        msg = email.message_from_bytes(response_part[1])
                         
-                        # Corpo do email
-                        if mime_type == 'text/plain':
-                            if 'data' in part['body']:
-                                corpo_encoded = part['body']['data']
-                                corpo += base64.urlsafe_b64decode(corpo_encoded).decode('utf-8', errors='ignore')
+                        # Extrair assunto
+                        subject = msg.get("Subject", "")
+                        if subject:
+                            decoded_subject = decode_header(subject)[0]
+                            if isinstance(decoded_subject[0], bytes):
+                                subject = decoded_subject[0].decode(decoded_subject[1] or 'utf-8', errors='ignore')
+                            else:
+                                subject = decoded_subject[0]
                         
-                        # Anexos
-                        filename = part.get('filename', '')
-                        if filename and filename.endswith(('.xlsx', '.csv', '.xls')):
-                            if 'attachmentId' in part['body']:
-                                attachment_id = part['body']['attachmentId']
-                                attachment = service.users().messages().attachments().get(
-                                    userId='me',
-                                    messageId=message['id'],
-                                    id=attachment_id
-                                ).execute()
+                        # Extrair remetente
+                        from_email = msg.get("From", "")
+                        
+                        # Extrair data
+                        date = msg.get("Date", "")
+                        
+                        # Extrair corpo e anexos
+                        corpo = ""
+                        anexos = []
+                        
+                        if msg.is_multipart():
+                            for part in msg.walk():
+                                content_type = part.get_content_type()
+                                content_disposition = str(part.get("Content-Disposition", ""))
                                 
-                                file_data = base64.urlsafe_b64decode(attachment['data'])
-                                anexos.append({
-                                    'filename': filename,
-                                    'data': file_data
-                                })
-                
-                processar_parte(msg['payload'])
-                
-                emails_pedidos.append({
-                    'id': message['id'],
-                    'assunto': subject,
-                    'remetente': from_email,
-                    'data': date,
-                    'corpo': corpo[:500],
-                    'corpo_completo': corpo,
-                    'anexos': anexos
-                })
+                                # Corpo do email
+                                if content_type == "text/plain" and "attachment" not in content_disposition:
+                                    try:
+                                        payload = part.get_payload(decode=True)
+                                        if payload:
+                                            corpo += payload.decode('utf-8', errors='ignore')
+                                    except:
+                                        pass
+                                
+                                # Anexos (apenas planilhas)
+                                if "attachment" in content_disposition:
+                                    filename = part.get_filename()
+                                    if filename and filename.lower().endswith(('.xlsx', '.csv', '.xls')):
+                                        # Decodificar nome do arquivo se necessário
+                                        if filename:
+                                            decoded_filename = decode_header(filename)[0]
+                                            if isinstance(decoded_filename[0], bytes):
+                                                filename = decoded_filename[0].decode(decoded_filename[1] or 'utf-8', errors='ignore')
+                                            else:
+                                                filename = decoded_filename[0]
+                                        
+                                        # Obter dados do anexo
+                                        anexo_data = part.get_payload(decode=True)
+                                        if anexo_data:
+                                            anexos.append({
+                                                'filename': filename,
+                                                'data': anexo_data
+                                            })
+                        else:
+                            # Email não é multipart
+                            try:
+                                payload = msg.get_payload(decode=True)
+                                if payload:
+                                    corpo = payload.decode('utf-8', errors='ignore')
+                            except:
+                                pass
+                        
+                        # Adicionar à lista
+                        emails_pedidos.append({
+                            'id': email_id.decode(),
+                            'assunto': subject,
+                            'remetente': from_email,
+                            'data': date,
+                            'corpo': corpo[:500],  # Prévia
+                            'corpo_completo': corpo,
+                            'anexos': anexos
+                        })
             
             except Exception as e:
                 continue
         
+        # Limpar progresso
+        progress_bar.empty()
+        status_text.empty()
+        
+        # Fechar conexão
+        mail.close()
+        mail.logout()
+        
         return emails_pedidos
     
+    except imaplib.IMAP4.error as e:
+        st.error(f"❌ Erro de autenticação IMAP: {str(e)}")
+        st.warning("⚠️ Verifique se você está usando a SENHA DE APLICATIVO (não a senha normal do Gmail)")
+        return []
     except Exception as e:
-        st.error(f"❌ Erro ao ler emails: {str(e)}")
+        st.error(f"❌ Erro ao conectar: {str(e)}")
         return []
 
 def carregar_planilha(arquivo, config_colunas):
@@ -519,14 +510,15 @@ with st.sidebar:
             placeholder="faturamento@empresa.com.br"
         )
         st.session_state.config['email_remetente'] = st.text_input(
-            "Seu Email",
+            "Seu Email (Gmail)",
             value=st.session_state.config['email_remetente'],
-            placeholder="seu.email@empresa.com.br"
+            placeholder="seu.email@gmail.com"
         )
         st.session_state.config['senha_email'] = st.text_input(
-            "Senha do Email / Senha de App",
+            "Senha de Aplicativo Gmail",
             value=st.session_state.config['senha_email'],
-            type="password"
+            type="password",
+            help="Use senha de aplicativo, não a senha normal"
         )
         
         st.divider()
@@ -545,68 +537,36 @@ with st.sidebar:
         st.caption("⚠️ Para Gmail, use uma senha de aplicativo")
         if st.button("📖 Como criar senha de aplicativo?"):
             st.info("""
-            1. Acesse myaccount.google.com
-            2. Segurança → Verificação em duas etapas
-            3. Role até o final → Senhas de app
-            4. Selecione 'Email' e 'Outro'
-            5. Copie a senha gerada
+            **Passo a passo:**
+            1. Acesse: myaccount.google.com
+            2. Vá em "Segurança"
+            3. Ative "Verificação em duas etapas" (obrigatório)
+            4. Role até "Senhas de app"
+            5. Selecione "Email" → "Outro dispositivo"
+            6. Dê um nome (ex: "Sistema Pedidos")
+            7. Copie a senha gerada (16 caracteres)
+            8. Cole no campo acima
+            
+            ⚠️ A senha de aplicativo é DIFERENTE da sua senha do Gmail!
             """)
     
-    with st.expander("🔐 Gmail API (Leitura de Emails)", expanded=False):
-        st.session_state.config['usar_gmail_api'] = st.checkbox(
-            "Usar Gmail API",
-            value=st.session_state.config.get('usar_gmail_api', False)
-        )
+    with st.expander("📬 Leitura de Emails (IMAP)", expanded=False):
+        st.info("""
+        **Como funciona:**
+        - Usa IMAP para ler emails do Gmail
+        - Busca automaticamente emails com "pedido"
+        - Extrai anexos Excel/CSV
+        - Muito mais simples que OAuth!
+        """)
         
-        if st.session_state.config['usar_gmail_api']:
-            st.info("""
-            **Como configurar Gmail API:**
-            
-            1. Acesse: console.cloud.google.com
-            2. Crie um novo projeto
-            3. Ative a Gmail API
-            4. Crie credenciais OAuth 2.0
-            5. **IMPORTANTE:** Configure URIs de redirecionamento:
-               - `http://localhost` (intervalo completo de portas)
-            6. Baixe o arquivo credentials.json
-            7. Adicione seu email como usuário de teste
-            8. Faça upload abaixo
-            
-            **Passo a passo das URIs:**
-            - Vá em "APIs e Serviços" → "Credenciais"
-            - Clique no OAuth 2.0 criado
-            - Em "URIs de redirecionamento autorizados", adicione:
-              * http://localhost
-            - Isso permitirá qualquer porta dinâmica
-            - Salve as alterações
-            """)
-            
-            st.warning("⚠️ Se a porta 8080 estiver ocupada, o sistema encontrará automaticamente uma porta disponível.")
-            
-            credentials_file = st.file_uploader(
-                "Upload credentials.json",
-                type=['json'],
-                help="Arquivo de credenciais do Google Cloud"
-            )
-            
-            if credentials_file:
-                credentials_data = json.load(credentials_file)
-                
-                # Salvar credentials
-                with open(ARQUIVO_CREDENTIALS, 'w') as f:
-                    json.dump(credentials_data, f)
-                
-                st.success("✅ Credenciais carregadas!")
-                
-                if st.button("🔗 Autenticar com Google"):
-                    with st.spinner("Abrindo navegador para autenticação..."):
-                        service = autenticar_gmail_api(credentials_data)
-                        if service:
-                            st.session_state.gmail_service = service
-                            st.success("✅ Autenticação realizada!")
-                            st.info("💡 Agora você pode ir para a aba 'Emails Recebidos' e clicar em 'Buscar Emails'")
-        else:
-            st.caption("💡 Sem Gmail API, o sistema não conseguirá ler emails automaticamente. Você precisará fazer upload manual das planilhas.")
+        st.success("✅ Use a mesma senha de aplicativo configurada acima")
+        
+        st.caption("""
+        **Requisitos:**
+        - Email do Gmail configurado
+        - Senha de aplicativo configurada
+        - IMAP habilitado no Gmail (geralmente já está)
+        """)
     
     with st.expander("👥 Gerenciar Clientes", expanded=False):
         st.subheader("Adicionar Novo Cliente")
@@ -699,99 +659,101 @@ tab1, tab2, tab3, tab4 = st.tabs(["📧 Emails Recebidos", "📥 Novo Pedido", "
 with tab1:
     st.header("📧 Verificar Emails com Pedidos")
     
-    if not st.session_state.config.get('usar_gmail_api', False):
-        st.warning("⚠️ Gmail API não está habilitada. Ative na barra lateral para usar esta funcionalidade.")
-        st.info("💡 Sem a Gmail API, você pode fazer upload manual das planilhas na aba 'Novo Pedido'.")
+    col1, col2 = st.columns([3, 1])
     
-    elif st.session_state.gmail_service is None:
-        st.warning("⚠️ Gmail API não está autenticada. Configure e autentique na barra lateral.")
+    with col1:
+        st.info("💡 Esta aba lê seus emails via IMAP e exibe aqueles que contêm 'pedido' no assunto ou corpo.")
     
-    else:
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            st.info("💡 Esta aba lê seus emails e exibe apenas aqueles que contêm 'pedido' no assunto ou corpo.")
-        
-        with col2:
-            if st.button("🔄 Buscar Emails", type="primary", use_container_width=True):
-                with st.spinner("Buscando emails..."):
-                    emails = ler_emails_gmail_api(st.session_state.gmail_service, max_results=50)
+    with col2:
+        if st.button("🔄 Buscar Emails", type="primary", use_container_width=True):
+            # Verificar configurações
+            if not st.session_state.config['email_remetente']:
+                st.error("❌ Configure seu email na barra lateral!")
+            elif not st.session_state.config['senha_email']:
+                st.error("❌ Configure a senha de aplicativo na barra lateral!")
+            else:
+                with st.spinner("Conectando ao Gmail..."):
+                    emails = ler_emails_gmail_imap(
+                        st.session_state.config['email_remetente'],
+                        st.session_state.config['senha_email'],
+                        max_results=50
+                    )
                     st.session_state.emails_recebidos = emails
                     
                     if emails:
                         st.success(f"✅ {len(emails)} email(s) encontrado(s) com pedidos!")
                     else:
-                        st.warning("⚠️ Nenhum email com pedido encontrado.")
+                        st.warning("⚠️ Nenhum email com 'pedido' encontrado.")
+    
+    st.markdown("---")
+    
+    if len(st.session_state.emails_recebidos) == 0:
+        st.info("📭 Clique em 'Buscar Emails' para verificar sua caixa de entrada.")
+    else:
+        st.subheader(f"Emails Encontrados ({len(st.session_state.emails_recebidos)})")
         
-        st.markdown("---")
-        
-        if len(st.session_state.emails_recebidos) == 0:
-            st.info("📭 Clique em 'Buscar Emails' para verificar sua caixa de entrada.")
-        else:
-            st.subheader(f"Emails Encontrados ({len(st.session_state.emails_recebidos)})")
-            
-            for idx, email_info in enumerate(st.session_state.emails_recebidos):
-                with st.expander(f"📨 {email_info['assunto']} - {email_info['remetente']}", expanded=(idx==0)):
-                    col_info1, col_info2 = st.columns(2)
+        for idx, email_info in enumerate(st.session_state.emails_recebidos):
+            with st.expander(f"📨 {email_info['assunto']} - {email_info['remetente']}", expanded=(idx==0)):
+                col_info1, col_info2 = st.columns(2)
+                
+                with col_info1:
+                    st.write(f"**De:** {email_info['remetente']}")
+                    st.write(f"**Data:** {email_info['data']}")
+                
+                with col_info2:
+                    st.write(f"**Anexos:** {len(email_info['anexos'])} arquivo(s)")
+                
+                st.markdown("**Prévia do corpo:**")
+                st.text_area(
+                    "Conteúdo",
+                    value=email_info['corpo'],
+                    height=150,
+                    key=f"corpo_{idx}",
+                    disabled=True
+                )
+                
+                # Processar anexos
+                if email_info['anexos']:
+                    st.markdown("**Planilhas anexadas:**")
                     
-                    with col_info1:
-                        st.write(f"**De:** {email_info['remetente']}")
-                        st.write(f"**Data:** {email_info['data']}")
-                    
-                    with col_info2:
-                        st.write(f"**Anexos:** {len(email_info['anexos'])} arquivo(s)")
-                    
-                    st.markdown("**Prévia do corpo:**")
-                    st.text_area(
-                        "Conteúdo",
-                        value=email_info['corpo'],
-                        height=150,
-                        key=f"corpo_{idx}",
-                        disabled=True
-                    )
-                    
-                    # Processar anexos
-                    if email_info['anexos']:
-                        st.markdown("**Planilhas anexadas:**")
+                    for anexo_idx, anexo in enumerate(email_info['anexos']):
+                        st.write(f"📎 {anexo['filename']}")
                         
-                        for anexo_idx, anexo in enumerate(email_info['anexos']):
-                            st.write(f"📎 {anexo['filename']}")
+                        col_btn1, col_btn2, col_btn3 = st.columns(3)
+                        
+                        with col_btn1:
+                            # Tentar carregar a planilha
+                            df_anexo = carregar_planilha_de_bytes(
+                                anexo['data'],
+                                anexo['filename'],
+                                st.session_state.config_colunas
+                            )
                             
-                            col_btn1, col_btn2, col_btn3 = st.columns(3)
-                            
-                            with col_btn1:
-                                # Tentar carregar a planilha
-                                df_anexo = carregar_planilha_de_bytes(
-                                    anexo['data'],
-                                    anexo['filename'],
-                                    st.session_state.config_colunas
-                                )
-                                
+                            if df_anexo is not None:
+                                if st.button(f"👁️ Visualizar", key=f"view_{idx}_{anexo_idx}"):
+                                    st.dataframe(df_anexo, use_container_width=True)
+                        
+                        with col_btn2:
+                            # Download do anexo
+                            st.download_button(
+                                label="📥 Baixar",
+                                data=anexo['data'],
+                                file_name=anexo['filename'],
+                                mime="application/octet-stream",
+                                key=f"download_{idx}_{anexo_idx}"
+                            )
+                        
+                        with col_btn3:
+                            # Criar pedido a partir do anexo
+                            if st.button(f"➕ Criar Pedido", key=f"create_{idx}_{anexo_idx}", type="primary"):
                                 if df_anexo is not None:
-                                    if st.button(f"👁️ Visualizar", key=f"view_{idx}_{anexo_idx}"):
-                                        st.dataframe(df_anexo, use_container_width=True)
-                            
-                            with col_btn2:
-                                # Download do anexo
-                                st.download_button(
-                                    label="📥 Baixar",
-                                    data=anexo['data'],
-                                    file_name=anexo['filename'],
-                                    mime="application/octet-stream",
-                                    key=f"download_{idx}_{anexo_idx}"
-                                )
-                            
-                            with col_btn3:
-                                # Criar pedido a partir do anexo
-                                if st.button(f"➕ Criar Pedido", key=f"create_{idx}_{anexo_idx}", type="primary"):
-                                    if df_anexo is not None:
-                                        st.session_state.temp_df = df_anexo
-                                        st.session_state.temp_email_info = email_info
-                                        st.success("✅ Vá para a aba 'Novo Pedido' para processar!")
-                                    else:
-                                        st.error("❌ Não foi possível processar a planilha.")
-                    else:
-                        st.warning("⚠️ Este email não contém anexos de planilha.")
+                                    st.session_state.temp_df = df_anexo
+                                    st.session_state.temp_email_info = email_info
+                                    st.success("✅ Vá para a aba 'Novo Pedido' para processar!")
+                                else:
+                                    st.error("❌ Não foi possível processar a planilha.")
+                else:
+                    st.warning("⚠️ Este email não contém anexos de planilha.")
 
 # TAB 2 - NOVO PEDIDO
 with tab2:
@@ -878,7 +840,7 @@ with tab2:
                 df_editado.at[idx, 'tributacao'] = CATEGORIAS_PRODUTO[row['categoria']]
             
             st.markdown("---")
-            col_btn1, col_btn2, col_btn3 = st.columns(3)
+            col_btn1, col_btn2 = st.columns(2)
             
             with col_btn1:
                 if st.button("📧 Enviar para Faturamento", type="primary", use_container_width=True):

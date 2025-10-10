@@ -4,14 +4,17 @@ import numpy as np
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
-from scipy import stats
-from sklearn.cluster import KMeans
+from scipy import stats, signal
+from scipy.fft import fft, fftfreq
+from sklearn.cluster import KMeans, DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
+from sklearn.ensemble import IsolationForest
 import io
 import warnings
 from multiprocessing import Pool, cpu_count
 from functools import partial
+from collections import defaultdict, Counter
 
 warnings.filterwarnings('ignore')
 
@@ -23,15 +26,766 @@ st.set_page_config(
 )
 
 # ============================================================
-# FUNÇÕES AUXILIARES DE AGRUPAMENTO
+# CLASSE DE ANÁLISE AVANÇADA DE RECORRÊNCIA
+# ============================================================
+
+class AdvancedRecurrenceAnalyzer:
+    """Analisador avançado de padrões de reincidência com otimizações"""
+    
+    def __init__(self, df, alert_id):
+        self.df = df.copy() if df is not None else None
+        self.alert_id = alert_id
+        self.cache = {}
+        
+    def _cache_result(self, key, func):
+        """Cache de resultados para otimização"""
+        if key not in self.cache:
+            self.cache[key] = func()
+        return self.cache[key]
+    
+    def _prepare_data(self):
+        """Preparação otimizada dos dados"""
+        if self.df is None or len(self.df) < 3:
+            return None
+            
+        df = self.df.sort_values('created_on').copy()
+        
+        # Vetorizar operações de timestamp
+        df['timestamp'] = df['created_on'].astype('int64') // 10**9
+        df['time_diff_seconds'] = df['timestamp'].diff()
+        df['time_diff_hours'] = df['time_diff_seconds'] / 3600
+        df['time_diff_days'] = df['time_diff_seconds'] / 86400
+        
+        # Extrair componentes temporais de uma vez
+        if 'hour' not in df.columns:
+            df['hour'] = df['created_on'].dt.hour
+        if 'day_of_week' not in df.columns:
+            df['day_of_week'] = df['created_on'].dt.dayofweek
+        if 'day_of_month' not in df.columns:
+            df['day_of_month'] = df['created_on'].dt.day
+        if 'week_of_year' not in df.columns:
+            df['week_of_year'] = df['created_on'].dt.isocalendar().week
+        if 'month' not in df.columns:
+            df['month'] = df['created_on'].dt.month
+        if 'day_name' not in df.columns:
+            df['day_name'] = df['created_on'].dt.day_name()
+        
+        return df
+    
+    def analyze(self):
+        """Método principal de análise"""
+        st.header("🔄 Análise Avançada de Reincidência Temporal")
+        
+        df = self._prepare_data()
+        if df is None:
+            st.warning("⚠️ Dados insuficientes (mínimo 3 ocorrências).")
+            return
+        
+        st.info(f"📊 Analisando **{len(df)}** ocorrências do Alert ID: **{self.alert_id}**")
+        
+        intervals_hours = df['time_diff_hours'].dropna().values
+        if len(intervals_hours) < 2:
+            st.warning("⚠️ Intervalos insuficientes.")
+            return
+        
+        # Executar todas as análises
+        results = {}
+        results['basic_stats'] = self._analyze_basic_statistics(intervals_hours)
+        results['regularity'] = self._analyze_regularity(intervals_hours)
+        results['periodicity'] = self._analyze_periodicity(intervals_hours)
+        results['autocorr'] = self._analyze_autocorrelation(intervals_hours)
+        results['temporal'] = self._analyze_temporal_patterns(df)
+        results['clusters'] = self._analyze_clusters(df, intervals_hours)
+        results['bursts'] = self._detect_bursts(intervals_hours)
+        results['seasonality'] = self._analyze_seasonality(df)
+        results['changepoints'] = self._detect_changepoints(intervals_hours)
+        results['anomalies'] = self._detect_anomalies(intervals_hours)
+        results['trend'] = self._analyze_trend(df)
+        results['predictability'] = self._calculate_predictability(intervals_hours)
+        results['stability'] = self._analyze_stability(intervals_hours, df)
+        results['pattern_mining'] = self._mine_patterns(intervals_hours)
+        
+        # Classificação final consolidada
+        self._final_classification(results, df, intervals_hours)
+    
+    def _analyze_basic_statistics(self, intervals):
+        """Estatísticas básicas otimizadas"""
+        st.subheader("📊 1. Estatísticas de Intervalos")
+        
+        stats_dict = {
+            'mean': np.mean(intervals),
+            'median': np.median(intervals),
+            'std': np.std(intervals),
+            'min': np.min(intervals),
+            'max': np.max(intervals),
+            'cv': np.std(intervals) / np.mean(intervals) if np.mean(intervals) > 0 else float('inf'),
+            'q25': np.percentile(intervals, 25),
+            'q75': np.percentile(intervals, 75),
+            'iqr': np.percentile(intervals, 75) - np.percentile(intervals, 25)
+        }
+        
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("⏱️ Média", f"{stats_dict['mean']:.1f}h")
+        col2.metric("📊 Mediana", f"{stats_dict['median']:.1f}h")
+        col3.metric("📈 Desvio", f"{stats_dict['std']:.1f}h")
+        col4.metric("⚡ Mínimo", f"{stats_dict['min']:.1f}h")
+        col5.metric("🐌 Máximo", f"{stats_dict['max']:.1f}h")
+        
+        return stats_dict
+    
+    def _analyze_regularity(self, intervals):
+        """Análise de regularidade com testes estatísticos"""
+        st.subheader("🎯 2. Regularidade e Aleatoriedade")
+        
+        cv = np.std(intervals) / np.mean(intervals) if np.mean(intervals) > 0 else float('inf')
+        
+        if cv < 0.15:
+            pattern_type = "🟢 ALTAMENTE REGULAR"
+            pattern_color = "green"
+            regularity_score = 95
+        elif cv < 0.35:
+            pattern_type = "🟢 REGULAR"
+            pattern_color = "lightgreen"
+            regularity_score = 80
+        elif cv < 0.65:
+            pattern_type = "🟡 SEMI-REGULAR"
+            pattern_color = "yellow"
+            regularity_score = 60
+        elif cv < 1.0:
+            pattern_type = "🟠 IRREGULAR"
+            pattern_color = "orange"
+            regularity_score = 40
+        else:
+            pattern_type = "🔴 ALTAMENTE IRREGULAR"
+            pattern_color = "red"
+            regularity_score = 20
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.markdown(f"**Classificação:** {pattern_type}")
+            st.write(f"**CV:** {cv:.2%}")
+            
+            # Teste de Shapiro-Wilk para normalidade
+            if len(intervals) >= 3:
+                _, p_value = stats.shapiro(intervals)
+                if p_value > 0.05:
+                    st.info("📊 **Normalidade:** Distribuição aproximadamente normal")
+                else:
+                    st.warning("📊 **Normalidade:** Distribuição não-normal")
+        
+        with col2:
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=regularity_score,
+                title={'text': "Regularidade"},
+                gauge={
+                    'axis': {'range': [0, 100]},
+                    'bar': {'color': pattern_color},
+                    'steps': [
+                        {'range': [0, 40], 'color': "lightgray"},
+                        {'range': [40, 70], 'color': "lightyellow"},
+                        {'range': [70, 100], 'color': "lightgreen"}
+                    ]
+                }
+            ))
+            fig.update_layout(height=250)
+            st.plotly_chart(fig, use_container_width=True, key='reg_gauge')
+        
+        return {'cv': cv, 'score': regularity_score, 'type': pattern_type}
+    
+    def _analyze_periodicity(self, intervals):
+        """Análise de periodicidade com FFT"""
+        st.subheader("🔍 3. Periodicidade (FFT)")
+        
+        if len(intervals) < 10:
+            st.info("📊 Mínimo de 10 intervalos necessários")
+            return {}
+        
+        intervals_norm = (intervals - np.mean(intervals)) / np.std(intervals)
+        n_padded = 2**int(np.ceil(np.log2(len(intervals_norm))))
+        intervals_padded = np.pad(intervals_norm, (0, n_padded - len(intervals_norm)), 'constant')
+        
+        fft_vals = fft(intervals_padded)
+        freqs = fftfreq(n_padded, d=1)
+        
+        positive_idx = freqs > 0
+        freqs_pos = freqs[positive_idx]
+        fft_mag = np.abs(fft_vals[positive_idx])
+        
+        threshold = np.mean(fft_mag) + 2 * np.std(fft_mag)
+        peaks_idx = fft_mag > threshold
+        
+        dominant_periods = []
+        if np.any(peaks_idx):
+            dominant_freqs = freqs_pos[peaks_idx]
+            dominant_periods = 1 / dominant_freqs
+            dominant_periods = dominant_periods[dominant_periods < len(intervals)][:3]
+            
+            st.success("🎯 **Periodicidades Detectadas:**")
+            for period in dominant_periods:
+                est_time = period * np.mean(intervals)
+                time_str = f"{est_time:.1f}h" if est_time < 24 else f"{est_time/24:.1f} dias"
+                st.write(f"• Período: **{period:.1f}** ocorrências (~{time_str})")
+        else:
+            st.info("📊 Nenhuma periodicidade forte detectada")
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=1/freqs_pos[:len(freqs_pos)//4],
+            y=fft_mag[:len(freqs_pos)//4],
+            mode='lines',
+            fill='tozeroy'
+        ))
+        fig.update_layout(
+            title="Espectro de Frequência",
+            xaxis_title="Período",
+            yaxis_title="Magnitude",
+            height=300,
+            xaxis_type="log"
+        )
+        st.plotly_chart(fig, use_container_width=True, key='fft')
+        
+        return {'periods': dominant_periods, 'has_periodicity': len(dominant_periods) > 0}
+    
+    def _analyze_autocorrelation(self, intervals):
+        """Análise de autocorrelação"""
+        st.subheader("📈 4. Autocorrelação")
+        
+        if len(intervals) < 5:
+            return {}
+        
+        intervals_norm = (intervals - np.mean(intervals)) / np.std(intervals)
+        autocorr = signal.correlate(intervals_norm, intervals_norm, mode='full')
+        autocorr = autocorr[len(autocorr)//2:]
+        autocorr = autocorr / autocorr[0]
+        
+        lags = np.arange(len(autocorr))
+        threshold = 2 / np.sqrt(len(intervals))
+        
+        significant_peaks = [(i, autocorr[i]) for i in range(1, min(len(autocorr), 20)) 
+                           if autocorr[i] > threshold]
+        
+        if significant_peaks:
+            st.success("✅ **Autocorrelação Significativa:**")
+            for lag, corr in significant_peaks[:3]:
+                st.write(f"• Lag {lag}: {corr:.2f}")
+        else:
+            st.info("📊 Sem autocorrelação significativa")
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=lags[:min(30, len(lags))],
+            y=autocorr[:min(30, len(autocorr))],
+            mode='lines+markers'
+        ))
+        fig.add_hline(y=threshold, line_dash="dash", line_color="red")
+        fig.add_hline(y=-threshold, line_dash="dash", line_color="red")
+        fig.update_layout(title="Autocorrelação", height=300)
+        st.plotly_chart(fig, use_container_width=True, key='autocorr')
+        
+        return {'peaks': significant_peaks, 'has_autocorr': len(significant_peaks) > 0}
+    
+    def _analyze_temporal_patterns(self, df):
+        """Análise de padrões temporais"""
+        st.subheader("⏰ 5. Padrões Temporais")
+        
+        hourly = df.groupby('hour').size()
+        hourly = hourly.reindex(range(24), fill_value=0)
+        
+        daily = df.groupby('day_of_week').size()
+        daily = daily.reindex(range(7), fill_value=0)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig = go.Figure(go.Bar(
+                x=list(range(24)),
+                y=hourly.values,
+                marker_color=['red' if v > hourly.mean() + hourly.std() else 'lightblue' 
+                            for v in hourly.values]
+            ))
+            fig.update_layout(title="Por Hora", xaxis_title="Hora", height=250)
+            st.plotly_chart(fig, use_container_width=True, key='hourly')
+            
+            peak_hours = hourly[hourly > hourly.mean() + hourly.std()].index.tolist()
+            if peak_hours:
+                st.success(f"🕐 **Picos:** {', '.join([f'{h:02d}:00' for h in peak_hours])}")
+        
+        with col2:
+            days_map = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+            fig = go.Figure(go.Bar(
+                x=days_map,
+                y=daily.values,
+                marker_color=['red' if v > daily.mean() + daily.std() else 'lightgreen' 
+                            for v in daily.values]
+            ))
+            fig.update_layout(title="Por Dia", xaxis_title="Dia", height=250)
+            st.plotly_chart(fig, use_container_width=True, key='daily')
+            
+            peak_days = daily[daily > daily.mean() + daily.std()].index.tolist()
+            if peak_days:
+                st.success(f"📅 **Picos:** {', '.join([days_map[d] for d in peak_days])}")
+        
+        hourly_pct = (hourly / hourly.sum() * 100) if hourly.sum() > 0 else pd.Series()
+        daily_pct = (daily / daily.sum() * 100) if daily.sum() > 0 else pd.Series()
+        
+        hourly_conc = hourly_pct.nlargest(3).sum() if len(hourly_pct) > 0 else 0
+        daily_conc = daily_pct.nlargest(3).sum() if len(daily_pct) > 0 else 0
+        
+        return {
+            'hourly_concentration': hourly_conc,
+            'daily_concentration': daily_conc,
+            'peak_hours': peak_hours,
+            'peak_days': peak_days
+        }
+    
+    def _analyze_clusters(self, df, intervals):
+        """Detecção de clusters temporais"""
+        st.subheader("🎯 6. Clusters Temporais")
+        
+        if len(df) < 10:
+            st.info("Mínimo de 10 ocorrências necessário")
+            return {}
+        
+        first_ts = df['timestamp'].min()
+        time_features = ((df['timestamp'] - first_ts) / 3600).values.reshape(-1, 1)
+        
+        eps = np.median(intervals) * 2
+        dbscan = DBSCAN(eps=eps, min_samples=3)
+        clusters = dbscan.fit_predict(time_features)
+        
+        n_clusters = len(set(clusters)) - (1 if -1 in clusters else 0)
+        n_noise = list(clusters).count(-1)
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("🎯 Clusters", n_clusters)
+        col2.metric("📊 Em Clusters", len(clusters) - n_noise)
+        col3.metric("🔴 Isolados", n_noise)
+        
+        if n_clusters > 0:
+            st.success(f"✅ **{n_clusters} clusters** identificados")
+        
+        return {'n_clusters': n_clusters, 'n_noise': n_noise}
+    
+    def _detect_bursts(self, intervals):
+        """Detecção de bursts"""
+        st.subheader("💥 7. Detecção de Bursts")
+        
+        burst_threshold = np.percentile(intervals, 25)
+        
+        is_burst = intervals < burst_threshold
+        burst_changes = np.diff(np.concatenate(([False], is_burst, [False])))
+        burst_starts = np.where(burst_changes == 1)[0]
+        burst_ends = np.where(burst_changes == -1)[0]
+        
+        burst_sequences = [(start, end) for start, end in zip(burst_starts, burst_ends) 
+                          if end - start >= 3]
+        
+        col1, col2 = st.columns(2)
+        col1.metric("💥 Bursts", len(burst_sequences))
+        
+        if burst_sequences:
+            avg_size = np.mean([end - start for start, end in burst_sequences])
+            col2.metric("📊 Tamanho Médio", f"{avg_size:.1f}")
+            st.warning(f"⚠️ **{len(burst_sequences)} bursts** detectados")
+        else:
+            st.success("✅ Sem padrão de rajadas")
+        
+        return {'n_bursts': len(burst_sequences), 'has_bursts': len(burst_sequences) > 0}
+    
+    def _analyze_seasonality(self, df):
+        """Análise de sazonalidade"""
+        st.subheader("🌡️ 8. Sazonalidade")
+        
+        date_range = (df['created_on'].max() - df['created_on'].min()).days
+        
+        if date_range < 30:
+            st.info("📊 Período curto para análise sazonal")
+            return {}
+        
+        weekly = df.groupby('week_of_year').size()
+        
+        if len(weekly) >= 4:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=weekly.index,
+                y=weekly.values,
+                mode='lines+markers',
+                fill='tozeroy'
+            ))
+            fig.update_layout(title="Evolução Semanal", height=250)
+            st.plotly_chart(fig, use_container_width=True, key='weekly')
+            
+            if len(weekly) > 3:
+                slope, _, _, p_value, _ = stats.linregress(weekly.index.values, weekly.values)
+                if p_value < 0.05:
+                    if slope > 0:
+                        st.warning("📈 **Tendência crescente**")
+                        return {'trend': 'increasing', 'slope': slope}
+                    else:
+                        st.success("📉 **Tendência decrescente**")
+                        return {'trend': 'decreasing', 'slope': slope}
+        
+        return {'trend': 'stable'}
+    
+    def _detect_changepoints(self, intervals):
+        """Detecção de pontos de mudança"""
+        st.subheader("🔀 9. Pontos de Mudança")
+        
+        if len(intervals) < 20:
+            st.info("Mínimo de 20 intervalos necessário")
+            return {}
+        
+        cumsum = np.cumsum(intervals - np.mean(intervals))
+        
+        window = 5
+        changes = []
+        for i in range(window, len(cumsum) - window):
+            before = np.mean(intervals[max(0, i-window):i])
+            after = np.mean(intervals[i:min(len(intervals), i+window)])
+            if abs(before - after) > np.std(intervals):
+                changes.append(i)
+        
+        filtered = []
+        for cp in changes:
+            if not filtered or cp - filtered[-1] > 5:
+                filtered.append(cp)
+        
+        if filtered:
+            st.warning(f"⚠️ **{len(filtered)} pontos de mudança** detectados")
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=list(range(len(cumsum))), y=cumsum, mode='lines'))
+            for cp in filtered:
+                fig.add_vline(x=cp, line_dash="dash", line_color="red")
+            fig.update_layout(title="CUSUM", height=250)
+            st.plotly_chart(fig, use_container_width=True, key='cusum')
+        else:
+            st.success("✅ Comportamento estável")
+        
+        return {'changepoints': filtered, 'has_changes': len(filtered) > 0}
+    
+    def _detect_anomalies(self, intervals):
+        """Detecção de anomalias"""
+        st.subheader("🚨 10. Detecção de Anomalias")
+        
+        z_scores = np.abs(stats.zscore(intervals))
+        z_anomalies = np.sum(z_scores > 3)
+        
+        q1, q3 = np.percentile(intervals, [25, 75])
+        iqr = q3 - q1
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        iqr_anomalies = np.sum((intervals < lower) | (intervals > upper))
+        
+        iso_anomalies = 0
+        if len(intervals) >= 10:
+            iso_forest = IsolationForest(contamination=0.1, random_state=42)
+            predictions = iso_forest.fit_predict(intervals.reshape(-1, 1))
+            iso_anomalies = np.sum(predictions == -1)
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Z-Score", f"{z_anomalies}")
+        col2.metric("IQR", f"{iqr_anomalies}")
+        col3.metric("Iso. Forest", f"{iso_anomalies}")
+        
+        total_anomalies = max(z_anomalies, iqr_anomalies, iso_anomalies)
+        anomaly_rate = total_anomalies / len(intervals) * 100
+        
+        if anomaly_rate > 10:
+            st.warning(f"⚠️ **{anomaly_rate:.1f}%** de anomalias detectadas")
+        else:
+            st.success("✅ Baixa taxa de anomalias")
+        
+        return {'anomaly_rate': anomaly_rate, 'total_anomalies': total_anomalies}
+    
+    def _analyze_trend(self, df):
+        """Análise de tendência temporal"""
+        df_sorted = df.sort_values('created_on')
+        
+        df_sorted['week'] = df_sorted['created_on'].dt.to_period('W')
+        weekly_counts = df_sorted.groupby('week').size()
+        
+        if len(weekly_counts) < 3:
+            return {'has_trend': False}
+        
+        x = np.arange(len(weekly_counts))
+        y = weekly_counts.values
+        
+        slope, _, _, p_value, _ = stats.linregress(x, y)
+        
+        has_trend = p_value < 0.05
+        trend_type = 'increasing' if slope > 0 else 'decreasing'
+        
+        return {
+            'has_trend': has_trend,
+            'trend_type': trend_type if has_trend else 'stable',
+            'slope': slope,
+            'p_value': p_value
+        }
+    
+    def _calculate_predictability(self, intervals):
+        """Calcula score de previsibilidade"""
+        if len(intervals) < 5:
+            return {'score': 0}
+        
+        n_bins = min(10, len(intervals) // 3)
+        hist, _ = np.histogram(intervals, bins=n_bins)
+        probs = hist[hist > 0] / hist.sum()
+        entropy = -np.sum(probs * np.log2(probs))
+        max_entropy = np.log2(n_bins)
+        norm_entropy = entropy / max_entropy if max_entropy > 0 else 1
+        
+        predictability_score = (1 - norm_entropy) * 100
+        
+        return {'score': predictability_score, 'entropy': norm_entropy}
+    
+    def _analyze_stability(self, intervals, df):
+        """Análise de estabilidade do padrão"""
+        if len(intervals) < 10:
+            return {'is_stable': True}
+        
+        mid = len(intervals) // 2
+        first_half = intervals[:mid]
+        second_half = intervals[mid:]
+        
+        _, p_value = stats.ttest_ind(first_half, second_half)
+        
+        is_stable = p_value > 0.05
+        
+        mean_diff = abs(np.mean(second_half) - np.mean(first_half))
+        drift_pct = (mean_diff / np.mean(first_half)) * 100 if np.mean(first_half) > 0 else 0
+        
+        return {
+            'is_stable': is_stable,
+            'drift_pct': drift_pct,
+            'p_value': p_value
+        }
+    
+    def _mine_patterns(self, intervals):
+        """Mining de padrões sequenciais"""
+        if len(intervals) < 10:
+            return {}
+        
+        q1, q2, q3 = np.percentile(intervals, [25, 50, 75])
+        
+        def categorize(val):
+            if val <= q1:
+                return 'A'
+            elif val <= q2:
+                return 'B'
+            elif val <= q3:
+                return 'C'
+            else:
+                return 'D'
+        
+        sequence = ''.join([categorize(i) for i in intervals])
+        
+        patterns = defaultdict(int)
+        for n in [2, 3]:
+            for i in range(len(sequence) - n + 1):
+                ngram = sequence[i:i+n]
+                patterns[ngram] += 1
+        
+        frequent = {k: v for k, v in patterns.items() if v >= 3}
+        
+        return {'frequent_patterns': frequent, 'has_patterns': len(frequent) > 0}
+    
+    def _final_classification(self, results, df, intervals):
+        """Classificação final consolidada"""
+        st.markdown("---")
+        st.header("🎯 CLASSIFICAÇÃO FINAL DE REINCIDÊNCIA")
+        
+        score = 0
+        max_score = 100
+        criteria = []
+        
+        # 1. Regularidade (20 pontos)
+        cv = results['basic_stats']['cv']
+        if cv < 0.35:
+            score += 20
+            criteria.append(("✅ Alta regularidade", 20))
+        elif cv < 0.65:
+            score += 12
+            criteria.append(("🟡 Regularidade moderada", 12))
+        else:
+            criteria.append(("❌ Baixa regularidade", 0))
+        
+        # 2. Periodicidade (15 pontos)
+        if results.get('periodicity', {}).get('has_periodicity', False):
+            score += 15
+            criteria.append(("✅ Periodicidade detectada", 15))
+        else:
+            criteria.append(("❌ Sem periodicidade", 0))
+        
+        # 3. Autocorrelação (15 pontos)
+        if results.get('autocorr', {}).get('has_autocorr', False):
+            score += 15
+            criteria.append(("✅ Autocorrelação significativa", 15))
+        else:
+            criteria.append(("❌ Sem autocorrelação", 0))
+        
+        # 4. Concentração temporal (15 pontos)
+        hourly_conc = results.get('temporal', {}).get('hourly_concentration', 0)
+        daily_conc = results.get('temporal', {}).get('daily_concentration', 0)
+        if hourly_conc > 50 or daily_conc > 50:
+            score += 15
+            criteria.append(("✅ Alta concentração temporal", 15))
+        else:
+            criteria.append(("❌ Distribuição uniforme", 0))
+        
+        # 5. Clusters (10 pontos)
+        if results.get('clusters', {}).get('n_clusters', 0) > 1:
+            score += 10
+            criteria.append(("✅ Clusters identificados", 10))
+        else:
+            criteria.append(("❌ Sem clusters", 0))
+        
+        # 6. Previsibilidade (10 pontos)
+        pred_score = results.get('predictability', {}).get('score', 0)
+        if pred_score > 60:
+            score += 10
+            criteria.append(("✅ Alta previsibilidade", 10))
+        else:
+            criteria.append(("❌ Baixa previsibilidade", 0))
+        
+        # 7. Estabilidade (10 pontos)
+        if results.get('stability', {}).get('is_stable', True):
+            score += 10
+            criteria.append(("✅ Padrão estável", 10))
+        else:
+            criteria.append(("⚠️ Padrão instável", 0))
+        
+        # 8. Ausência de bursts (5 pontos)
+        if not results.get('bursts', {}).get('has_bursts', False):
+            score += 5
+            criteria.append(("✅ Sem rajadas", 5))
+        else:
+            criteria.append(("⚠️ Presença de bursts", 0))
+        
+        # Determinar classificação
+        if score >= 70:
+            classification = "🔴 ALERTA REINCIDENTE"
+            level = "CRÍTICO"
+            color = "red"
+            recommendation = "**Ação Imediata:** Criar automação, runbook e investigar causa raiz"
+            priority = "P1"
+        elif score >= 50:
+            classification = "🟠 PARCIALMENTE REINCIDENTE"
+            level = "ALTO"
+            color = "orange"
+            recommendation = "**Ação Recomendada:** Monitorar evolução e considerar automação"
+            priority = "P2"
+        elif score >= 30:
+            classification = "🟡 PADRÃO DETECTÁVEL"
+            level = "MÉDIO"
+            color = "yellow"
+            recommendation = "**Ação Sugerida:** Documentar padrão e revisar thresholds"
+            priority = "P3"
+        else:
+            classification = "🟢 NÃO REINCIDENTE"
+            level = "BAIXO"
+            color = "green"
+            recommendation = "**Ação:** Análise caso a caso - possível alarme falso"
+            priority = "P4"
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.markdown(f"### {classification}")
+            st.markdown(f"**Nível:** {level} | **Prioridade:** {priority}")
+            st.metric("Score de Reincidência", f"{score}/100", delta=level)
+            
+            st.markdown("#### 📊 Critérios Avaliados")
+            for criterion, points in criteria:
+                st.write(f"• {criterion} ({points} pts)")
+            
+            st.info(recommendation)
+            
+            st.markdown("#### 📈 Métricas Complementares")
+            col_a, col_b, col_c = st.columns(3)
+            col_a.metric("CV", f"{cv:.2f}")
+            col_b.metric("Previsibilidade", f"{pred_score:.0f}%")
+            col_c.metric("Anomalias", f"{results.get('anomalies', {}).get('anomaly_rate', 0):.1f}%")
+        
+        with col2:
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=score,
+                title={'text': "Score Final", 'font': {'size': 20}},
+                gauge={
+                    'axis': {'range': [0, 100]},
+                    'bar': {'color': color},
+                    'steps': [
+                        {'range': [0, 30], 'color': "lightgray"},
+                        {'range': [30, 50], 'color': "lightyellow"},
+                        {'range': [50, 70], 'color': "orange"},
+                        {'range': [70, 100], 'color': "red"}
+                    ],
+                    'threshold': {
+                        'line': {'color': "black", 'width': 3},
+                        'thickness': 0.75,
+                        'value': 70
+                    }
+                }
+            ))
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True, key='final_gauge')
+        
+        # Predição
+        if score >= 50:
+            st.markdown("---")
+            st.subheader("🔮 Predição de Próxima Ocorrência")
+            
+            last_alert = df['created_on'].max()
+            mean_interval = np.mean(intervals)
+            std_interval = np.std(intervals)
+            
+            pred_time = last_alert + pd.Timedelta(hours=mean_interval)
+            conf_interval = 1.96 * std_interval
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Predição", pred_time.strftime('%d/%m %H:%M'))
+            col2.metric("Intervalo", f"{mean_interval:.1f}h")
+            col3.metric("Confiança (95%)", f"± {conf_interval:.1f}h")
+        
+        # Exportar
+        st.markdown("---")
+        export_data = {
+            'alert_id': self.alert_id,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'classificacao': classification,
+            'nivel': level,
+            'prioridade': priority,
+            'score': score,
+            'cv': cv,
+            'periodicidade': results.get('periodicity', {}).get('has_periodicity', False),
+            'autocorrelacao': results.get('autocorr', {}).get('has_autocorr', False),
+            'clusters': results.get('clusters', {}).get('n_clusters', 0),
+            'previsibilidade': pred_score,
+            'anomalias_pct': results.get('anomalies', {}).get('anomaly_rate', 0),
+            'recomendacao': recommendation
+        }
+        
+        export_df = pd.DataFrame([export_data])
+        csv = export_df.to_csv(index=False)
+        
+        st.download_button(
+            label="⬇️ Exportar Relatório Completo (CSV)",
+            data=csv,
+            file_name=f"reincidencia_{self.alert_id}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+
+# ============================================================
+# FUNÇÕES AUXILIARES DE AGRUPAMENTO (código original mantido)
 # ============================================================
 
 def identify_alert_groups(alert_data, max_gap_hours=24, min_group_size=3, 
                          spike_threshold_multiplier=5):
-    """
-    Identifica grupos/sessões de alertas baseado em intervalos de tempo.
-    Alertas isolados são aqueles que não pertencem a nenhum grupo significativo.
-    """
     if len(alert_data) == 0:
         return alert_data, []
     
@@ -93,9 +847,6 @@ def identify_alert_groups(alert_data, max_gap_hours=24, min_group_size=3,
 
 def classify_alert_pattern(alert_data, max_gap_hours=24, min_group_size=3, 
                           spike_threshold_multiplier=5):
-    """
-    Classifica um alerta baseado na identificação de grupos.
-    """
     n = len(alert_data)
     if n == 0:
         return {
@@ -163,7 +914,7 @@ def classify_alert_pattern(alert_data, max_gap_hours=24, min_group_size=3,
     }
 
 # ============================================================
-# FUNÇÕES DE PROCESSAMENTO
+# FUNÇÕES DE PROCESSAMENTO (código original mantido)
 # ============================================================
 
 def process_single_alert(alert_id, df_original, max_gap_hours=24, min_group_size=3, 
@@ -225,7 +976,7 @@ def process_alert_chunk(alert_ids, df_original, max_gap_hours=24, min_group_size
                                                min_group_size, spike_threshold_multiplier))]
 
 # ============================================================
-# CLASSE PRINCIPAL
+# CLASSE PRINCIPAL (mantida com integração da nova análise)
 # ============================================================
 
 class StreamlitAlertAnalyzer:
@@ -364,7 +1115,16 @@ class StreamlitAlertAnalyzer:
         return len(self.df_all_alerts) > 0
 
     # ============================================================
-    # ANÁLISE GLOBAL - ISOLADOS VS CONTÍNUOS
+    # MÉTODO ATUALIZADO - ANÁLISE DE RECORRÊNCIA TEMPORAL
+    # ============================================================
+
+    def analyze_temporal_recurrence_patterns(self):
+        """Análise avançada de recorrência usando a nova classe"""
+        analyzer = AdvancedRecurrenceAnalyzer(self.df, self.alert_id)
+        analyzer.analyze()
+
+    # ============================================================
+    # MÉTODOS RESTANTES (mantidos do código original)
     # ============================================================
 
     def show_isolated_vs_continuous_analysis(self):
@@ -607,14 +1367,7 @@ class StreamlitAlertAnalyzer:
                 st.write("• Criar runbooks específicos")
                 st.write("• Considerar ajuste de thresholds")
 
-    # ============================================================
-    # VISUALIZAÇÃO DETALHADA DOS GRUPOS CONTÍNUOS
-    # ============================================================
-
     def show_continuous_groups_detailed_view(self):
-        """
-        Mostra visualização detalhada dos grupos identificados nos alertas contínuos
-        """
         st.header("🔍 Visualização Detalhada dos Grupos - Alertas Contínuos")
         
         df_continuous = self.df_all_alerts[self.df_all_alerts['pattern_type'] == 'continuous']
@@ -842,47 +1595,43 @@ class StreamlitAlertAnalyzer:
                 )
                 st.plotly_chart(fig_all_duration, use_container_width=True, key='all_duration_hist')
 
-    # ============================================================
-    # ANÁLISE DE RECORRÊNCIA - ALERTAS CONTÍNUOS
-    # ============================================================
-
     def analyze_continuous_recurrence_patterns(self):
-        """
-        Analisa padrões de recorrência APENAS dos alertas contínuos.
-        """
         st.header("🔁 Análise de Recorrência - Alertas Contínuos")
-        
+
         df_continuous = self.df_all_alerts[self.df_all_alerts['pattern_type'] == 'continuous']
-        
+
         if len(df_continuous) == 0:
             st.warning("⚠️ Nenhum alerta contínuo encontrado para análise de recorrência.")
             return
-        
+
         st.info(f"📊 Analisando padrões de recorrência de **{len(df_continuous)}** alertas contínuos")
-        
+
         continuous_alert_ids = df_continuous['alert_id'].unique()
         df_continuous_details = self.df_original[self.df_original['u_alert_id'].isin(continuous_alert_ids)].copy()
-        
+
         df_continuous_details['hour'] = df_continuous_details['created_on'].dt.hour
         df_continuous_details['day_of_week'] = df_continuous_details['created_on'].dt.dayofweek
         df_continuous_details['day_name'] = df_continuous_details['created_on'].dt.day_name()
-        
+
+        # ============================================================
+        # ⏰ PADRÃO DE RECORRÊNCIA POR HORA
+        # ============================================================
         st.subheader("⏰ Padrão de Recorrência por Hora do Dia")
-        
+
         hourly_dist = df_continuous_details['hour'].value_counts().sort_index()
         hourly_pct = (hourly_dist / hourly_dist.sum() * 100).round(2)
-        
+
         top_3_hours = hourly_pct.nlargest(3)
         total_top_3_hours = top_3_hours.sum()
-        
+
         col1, col2 = st.columns([2, 1])
-        
+
         with col1:
             fig_hourly = go.Figure()
             fig_hourly.add_trace(go.Bar(
                 x=hourly_dist.index,
                 y=hourly_dist.values,
-                marker_color=['red' if i in top_3_hours.index else 'lightblue' 
+                marker_color=['red' if i in top_3_hours.index else 'lightblue'
                              for i in hourly_dist.index],
                 text=hourly_pct.values,
                 texttemplate='%{text:.1f}%',
@@ -897,12 +1646,13 @@ class StreamlitAlertAnalyzer:
                 height=400
             )
             st.plotly_chart(fig_hourly, use_container_width=True, key='recurrence_hourly')
-        
+
         with col2:
             st.metric("🕐 Hora com Mais Alertas", f"{top_3_hours.index[0]}:00")
             st.metric("📊 % nesta Hora", f"{top_3_hours.values[0]:.1f}%")
             st.metric("🔝 Top 3 Horas (% total)", f"{total_top_3_hours:.1f}%")
-            
+
+            # ✅ Classificação de concentração horária
             if total_top_3_hours > 60:
                 pattern_hour = "🔴 **Concentrado**"
                 hour_desc = "Alertas altamente concentrados em poucas horas"
@@ -912,42 +1662,46 @@ class StreamlitAlertAnalyzer:
             else:
                 pattern_hour = "🟢 **Distribuído**"
                 hour_desc = "Alertas bem distribuídos ao longo do dia"
-            
+
             st.write(f"**Padrão:** {pattern_hour}")
             st.write(hour_desc)
-        
+
         st.write("**🔝 Top 5 Horários:**")
         top_5_hours = hourly_pct.nlargest(5)
         for hour, pct in top_5_hours.items():
             st.write(f"• **{hour:02d}:00** - {hourly_dist[hour]} alertas ({pct:.1f}%)")
-        
+
         st.markdown("---")
-        
+
+        # ============================================================
+        # 📅 PADRÃO DE RECORRÊNCIA POR DIA DA SEMANA
+        # ============================================================
         st.subheader("📅 Padrão de Recorrência por Dia da Semana")
-        
+
         daily_dist = df_continuous_details['day_name'].value_counts()
         days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         daily_dist_ordered = daily_dist.reindex(days_order).fillna(0)
         daily_pct = (daily_dist_ordered / daily_dist_ordered.sum() * 100).round(2)
-        
+
         top_3_days = daily_pct.nlargest(3)
         total_top_3_days = top_3_days.sum()
-        
+
         day_translation = {
             'Monday': 'Segunda', 'Tuesday': 'Terça', 'Wednesday': 'Quarta',
             'Thursday': 'Quinta', 'Friday': 'Sexta', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
         }
+
         daily_pct_pt = daily_pct.rename(index=day_translation)
         daily_dist_ordered_pt = daily_dist_ordered.rename(index=day_translation)
-        
+
         col1, col2 = st.columns([2, 1])
-        
+
         with col1:
             fig_daily = go.Figure()
             fig_daily.add_trace(go.Bar(
                 x=list(daily_pct_pt.index),
                 y=daily_dist_ordered_pt.values,
-                marker_color=['red' if day in [day_translation[d] for d in top_3_days.index] else 'lightgreen' 
+                marker_color=['red' if day in [day_translation[d] for d in top_3_days.index] else 'lightgreen'
                              for day in daily_pct_pt.index],
                 text=daily_pct_pt.values,
                 texttemplate='%{text:.1f}%',
@@ -962,14 +1716,14 @@ class StreamlitAlertAnalyzer:
                 height=400
             )
             st.plotly_chart(fig_daily, use_container_width=True, key='recurrence_daily')
-        
+
         with col2:
             top_day_en = top_3_days.index[0]
             top_day_pt = day_translation[top_day_en]
             st.metric("📅 Dia com Mais Alertas", top_day_pt)
             st.metric("📊 % neste Dia", f"{top_3_days.values[0]:.1f}%")
             st.metric("🔝 Top 3 Dias (% total)", f"{total_top_3_days:.1f}%")
-            
+
             if total_top_3_days > 60:
                 pattern_day = "🔴 **Concentrado**"
                 day_desc = "Alertas altamente concentrados em poucos dias"
@@ -979,44 +1733,48 @@ class StreamlitAlertAnalyzer:
             else:
                 pattern_day = "🟢 **Distribuído**"
                 day_desc = "Alertas bem distribuídos na semana"
-            
+
             st.write(f"**Padrão:** {pattern_day}")
             st.write(day_desc)
-        
+
         st.write("**🔝 Ranking de Dias:**")
         top_days_sorted = daily_pct.sort_values(ascending=False)
         for day, pct in top_days_sorted.items():
             day_pt = day_translation[day]
             count = daily_dist_ordered[day]
             st.write(f"• **{day_pt}** - {int(count)} alertas ({pct:.1f}%)")
-        
+
         st.markdown("---")
-        
+
+        # ============================================================
+        # 🎯 RESUMO DO PADRÃO DE RECORRÊNCIA
+        # ============================================================
         st.subheader("🎯 Resumo do Padrão de Recorrência")
-        
+
         col1, col2 = st.columns(2)
-        
+
         with col1:
             st.write("**⏰ Padrão Horário:**")
             st.write(f"• {pattern_hour}")
             st.write(f"• Top 3 horas concentram {total_top_3_hours:.1f}% dos alertas")
             st.write(f"• Horário principal: **{top_3_hours.index[0]:02d}:00**")
-            
+
             if total_top_3_hours > 50:
-                st.write("• 💡 **Recomendação:** Considerar janela de manutenção específica")
-        
+                st.write("💡 **Recomendação:** Avaliar janela de manutenção neste horário")
+
         with col2:
             st.write("**📅 Padrão Semanal:**")
             st.write(f"• {pattern_day}")
             st.write(f"• Top 3 dias concentram {total_top_3_days:.1f}% dos alertas")
             st.write(f"• Dia principal: **{day_translation[top_day_en]}**")
-            
+
             if total_top_3_days > 50:
-                st.write("• 💡 **Recomendação:** Atenção redobrada nestes dias")
-        
+                st.write("💡 **Recomendação:** Atenção redobrada nestes dias")
+
         st.markdown("---")
         st.subheader("🏆 Padrão Dominante")
-        
+
+
         if total_top_3_hours > total_top_3_days:
             st.success(f"⏰ **HORA DO DIA** é o padrão dominante ({total_top_3_hours:.1f}% vs {total_top_3_days:.1f}%)")
             st.write(f"Os alertas contínuos tendem a ocorrer principalmente no horário das **{top_3_hours.index[0]:02d}:00**")
@@ -1025,16 +1783,20 @@ class StreamlitAlertAnalyzer:
             st.write(f"Os alertas contínuos tendem a ocorrer principalmente às **{day_translation[top_day_en]}**")
         else:
             st.info("📊 **Padrão BALANCEADO** - Não há concentração clara em hora ou dia específicos")
-        
+
         st.markdown("---")
+
+        # ============================================================
+        # 🔥 MAPA DE CALOR - HORA × DIA DA SEMANA
+        # ============================================================
         st.subheader("🔥 Mapa de Calor: Hora × Dia da Semana")
-        
+
         heatmap_data = df_continuous_details.groupby(['day_of_week', 'hour']).size().reset_index(name='count')
         heatmap_pivot = heatmap_data.pivot(index='hour', columns='day_of_week', values='count').fillna(0)
-        
+
         day_map = {0: 'Seg', 1: 'Ter', 2: 'Qua', 3: 'Qui', 4: 'Sex', 5: 'Sáb', 6: 'Dom'}
         heatmap_pivot.columns = [day_map[col] for col in heatmap_pivot.columns]
-        
+
         fig_heatmap = go.Figure(data=go.Heatmap(
             z=heatmap_pivot.values,
             x=heatmap_pivot.columns,
@@ -1042,19 +1804,19 @@ class StreamlitAlertAnalyzer:
             colorscale='Reds',
             hovertemplate='Dia: %{x}<br>Hora: %{y}:00<br>Alertas: %{z}<extra></extra>'
         ))
-        
+
         fig_heatmap.update_layout(
             title="Concentração de Alertas por Dia e Hora",
             xaxis_title="Dia da Semana",
             yaxis_title="Hora do Dia",
             height=600
         )
-        
+
         st.plotly_chart(fig_heatmap, use_container_width=True, key='recurrence_heatmap')
 
-    # ============================================================
-    # ANÁLISE GLOBAL - VISÃO GERAL
-    # ============================================================
+        # ============================================================
+        # ANÁLISE GLOBAL - VISÃO GERAL
+        # ============================================================
 
     def show_global_overview(self):
         st.subheader("📈 Visão Geral dos Alertas")
@@ -1096,10 +1858,6 @@ class StreamlitAlertAnalyzer:
                 fig_int = px.histogram(df_with_intervals, x='intervalo_medio_h', title="⏱️ Distribuição de Intervalos Médios",
                                       labels={'intervalo_medio_h': 'Intervalo Médio (horas)', 'count': 'Quantidade de Alert IDs'})
                 st.plotly_chart(fig_int, use_container_width=True)
-
-    # ============================================================
-    # CLUSTERING
-    # ============================================================
 
     def perform_clustering_analysis(self, use_only_continuous=True):
         st.subheader("🎯 Agrupamento de Alertas por Perfil de Comportamento")
@@ -1241,10 +1999,6 @@ class StreamlitAlertAnalyzer:
                     st.write(f"• {rec}")
                 if not recommendations:
                     st.write("• ✅ **Padrão normal**: Nenhuma ação específica recomendada")
-
-    # ============================================================
-    # ANÁLISE INDIVIDUAL
-    # ============================================================
 
     def show_basic_stats(self):
         st.header("📊 Estatísticas Básicas")
@@ -1442,1197 +2196,8 @@ class StreamlitAlertAnalyzer:
                 hovermode='closest'
             )
             st.plotly_chart(fig, use_container_width=True, key='individual_alert_timeline')
+            
 
-    def analyze_temporal_recurrence_patterns(self):
-    
-        st.header("🔄 Análise Avançada de Recorrência Temporal")
-        
-        if self.df is None or len(self.df) < 3:
-            st.warning("⚠️ Dados insuficientes para análise de recorrência (mínimo 3 ocorrências).")
-            return
-        
-        # Preparar dados temporais
-        df_sorted = self.df.sort_values('created_on').copy()
-        st.info(f"📊 Analisando padrões de recorrência para **{len(df_sorted)}** ocorrências do Alert ID: **{self.alert_id}**")
-        
-        # Calcular intervalos
-        df_sorted['timestamp'] = df_sorted['created_on'].astype('int64') // 10**9
-        df_sorted['time_diff_seconds'] = df_sorted['timestamp'].diff()
-        df_sorted['time_diff_hours'] = df_sorted['time_diff_seconds'] / 3600
-        df_sorted['time_diff_days'] = df_sorted['time_diff_seconds'] / 86400
-        
-        intervals_seconds = df_sorted['time_diff_seconds'].dropna().values
-        intervals_hours = df_sorted['time_diff_hours'].dropna().values
-        
-        if len(intervals_seconds) < 2:
-            st.warning("⚠️ Intervalos insuficientes para análise completa de recorrência.")
-            return
-        
-        # ============================================================
-        # 1. ESTATÍSTICAS BÁSICAS DE INTERVALO
-        # ============================================================
-        st.subheader("📊 1. Estatísticas de Intervalos")
-        
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            st.metric("⏱️ Média", f"{np.mean(intervals_hours):.1f}h")
-        with col2:
-            st.metric("📊 Mediana", f"{np.median(intervals_hours):.1f}h")
-        with col3:
-            st.metric("📈 Desvio Padrão", f"{np.std(intervals_hours):.1f}h")
-        with col4:
-            st.metric("⚡ Mínimo", f"{np.min(intervals_hours):.1f}h")
-        with col5:
-            st.metric("🐌 Máximo", f"{np.max(intervals_hours):.1f}h")
-        
-        # Coeficiente de variação para determinar regularidade
-        cv = np.std(intervals_hours) / np.mean(intervals_hours) if np.mean(intervals_hours) > 0 else float('inf')
-        
-        # ============================================================
-        # 2. CLASSIFICAÇÃO DE REGULARIDADE
-        # ============================================================
-        st.subheader("🎯 2. Classificação de Regularidade")
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            if cv < 0.15:
-                pattern_type = "🟢 **ALTAMENTE REGULAR**"
-                pattern_desc = "Intervalos extremamente consistentes - possível processo automatizado"
-                pattern_color = "green"
-                regularity_score = 95
-            elif cv < 0.35:
-                pattern_type = "🟢 **REGULAR**"
-                pattern_desc = "Intervalos consistentes com pequenas variações"
-                pattern_color = "lightgreen"
-                regularity_score = 80
-            elif cv < 0.65:
-                pattern_type = "🟡 **SEMI-REGULAR**"
-                pattern_desc = "Padrão detectável mas com variações moderadas"
-                pattern_color = "yellow"
-                regularity_score = 60
-            elif cv < 1.0:
-                pattern_type = "🟠 **IRREGULAR**"
-                pattern_desc = "Intervalos inconsistentes - possível múltiplas causas"
-                pattern_color = "orange"
-                regularity_score = 40
-            else:
-                pattern_type = "🔴 **ALTAMENTE IRREGULAR**"
-                pattern_desc = "Sem padrão detectável - comportamento caótico ou aleatório"
-                pattern_color = "red"
-                regularity_score = 20
-            
-            st.markdown(f"**Classificação:** {pattern_type}")
-            st.write(pattern_desc)
-            st.write(f"**📊 Coeficiente de Variação:** {cv:.2%}")
-            
-            # Teste de aleatoriedade usando runs test
-            median_val = np.median(intervals_hours)
-            runs = []
-            current_run = []
-            
-            for val in intervals_hours:
-                if len(current_run) == 0:
-                    current_run.append(val > median_val)
-                elif (val > median_val) == current_run[-1]:
-                    current_run.append(val > median_val)
-                else:
-                    runs.append(len(current_run))
-                    current_run = [val > median_val]
-            if current_run:
-                runs.append(len(current_run))
-            
-            num_runs = len(runs)
-            expected_runs = (2 * len(intervals_hours) / 3) + 1
-            
-            if abs(num_runs - expected_runs) / expected_runs < 0.2:
-                st.info("📊 **Teste de Aleatoriedade:** Padrão consistente com comportamento aleatório")
-            else:
-                st.success("✅ **Teste de Aleatoriedade:** Padrão NÃO aleatório detectado - possível recorrência")
-        
-        with col2:
-            fig_gauge = go.Figure(go.Indicator(
-                mode = "gauge+number",
-                value = regularity_score,
-                title = {'text': "Score de Regularidade"},
-                gauge = {
-                    'axis': {'range': [0, 100]},
-                    'bar': {'color': pattern_color},
-                    'steps': [
-                        {'range': [0, 20], 'color': "lightgray"},
-                        {'range': [20, 40], 'color': "lightyellow"},
-                        {'range': [40, 60], 'color': "lightgreen"},
-                        {'range': [60, 80], 'color': "green"},
-                        {'range': [80, 100], 'color': "darkgreen"}
-                    ]
-                }
-            ))
-            fig_gauge.update_layout(height=250)
-            st.plotly_chart(fig_gauge, use_container_width=True, key='regularity_gauge_advanced')
-        
-        # ============================================================
-        # 3. DETECÇÃO DE PERIODICIDADE (FFT)
-        # ============================================================
-        st.subheader("🔍 3. Análise de Periodicidade (FFT)")
-        
-        if len(intervals_hours) >= 10:
-            # Aplicar FFT para detectar frequências dominantes
-            from scipy.fft import fft, fftfreq
-            
-            # Normalizar e aplicar FFT
-            intervals_normalized = (intervals_hours - np.mean(intervals_hours)) / np.std(intervals_hours)
-            
-            # Padding para melhorar FFT
-            n = len(intervals_normalized)
-            n_padded = 2**int(np.ceil(np.log2(n)))
-            intervals_padded = np.pad(intervals_normalized, (0, n_padded - n), 'constant')
-            
-            fft_values = fft(intervals_padded)
-            frequencies = fftfreq(n_padded, d=1)
-            
-            # Pegar apenas frequências positivas
-            positive_freq_idx = frequencies > 0
-            frequencies_positive = frequencies[positive_freq_idx]
-            fft_magnitude = np.abs(fft_values[positive_freq_idx])
-            
-            # Encontrar picos de frequência
-            threshold = np.mean(fft_magnitude) + 2 * np.std(fft_magnitude)
-            peaks_idx = fft_magnitude > threshold
-            
-            if np.any(peaks_idx):
-                dominant_frequencies = frequencies_positive[peaks_idx]
-                dominant_periods = 1 / dominant_frequencies
-                
-                st.success("🎯 **Periodicidades Detectadas:**")
-                for i, period in enumerate(dominant_periods[:3]):  # Top 3 períodos
-                    if period < len(intervals_hours):  # Filtrar períodos muito longos
-                        st.write(f"• Período de aproximadamente **{period:.1f}** ocorrências")
-                        estimated_time = period * np.mean(intervals_hours)
-                        if estimated_time < 24:
-                            st.write(f"  → Equivale a ~**{estimated_time:.1f} horas**")
-                        else:
-                            st.write(f"  → Equivale a ~**{estimated_time/24:.1f} dias**")
-            else:
-                st.info("📊 Nenhuma periodicidade forte detectada via FFT")
-            
-            # Visualização FFT
-            fig_fft = go.Figure()
-            fig_fft.add_trace(go.Scatter(
-                x=1/frequencies_positive[:len(frequencies_positive)//4],  # Converter para período
-                y=fft_magnitude[:len(frequencies_positive)//4],
-                mode='lines',
-                name='Magnitude FFT'
-            ))
-            fig_fft.update_layout(
-                title="Espectro de Frequência (FFT)",
-                xaxis_title="Período (número de ocorrências)",
-                yaxis_title="Magnitude",
-                xaxis_type="log",
-                height=350
-            )
-            st.plotly_chart(fig_fft, use_container_width=True, key='fft_plot')
-        else:
-            st.info("📊 Mínimo de 10 intervalos necessários para análise FFT")
-        
-        # ============================================================
-        # 4. AUTOCORRELAÇÃO
-        # ============================================================
-        st.subheader("📈 4. Análise de Autocorrelação")
-        
-        if len(intervals_hours) >= 5:
-            from scipy import signal
-            
-            # Calcular autocorrelação
-            intervals_normalized = (intervals_hours - np.mean(intervals_hours)) / np.std(intervals_hours)
-            autocorr = signal.correlate(intervals_normalized, intervals_normalized, mode='full')
-            autocorr = autocorr[len(autocorr)//2:]  # Pegar apenas metade positiva
-            autocorr = autocorr / autocorr[0]  # Normalizar
-            
-            # Encontrar picos significativos
-            lags = np.arange(len(autocorr))
-            significant_threshold = 2 / np.sqrt(len(intervals_hours))  # 95% confidence
-            
-            # Encontrar primeiro pico significativo após lag 0
-            significant_peaks = []
-            for i in range(1, min(len(autocorr), 20)):
-                if autocorr[i] > significant_threshold:
-                    significant_peaks.append((i, autocorr[i]))
-            
-            if significant_peaks:
-                st.success("✅ **Autocorrelação Significativa Detectada:**")
-                for lag, corr_value in significant_peaks[:3]:
-                    st.write(f"• Lag {lag}: correlação de {corr_value:.2f}")
-                    st.write(f"  → Sugere repetição a cada ~{lag} ocorrências")
-            else:
-                st.info("📊 Sem autocorrelação significativa - padrão não repetitivo")
-            
-            # Visualização
-            fig_autocorr = go.Figure()
-            fig_autocorr.add_trace(go.Scatter(
-                x=lags[:min(30, len(lags))],
-                y=autocorr[:min(30, len(autocorr))],
-                mode='lines+markers',
-                name='Autocorrelação'
-            ))
-            fig_autocorr.add_hline(
-                y=significant_threshold, 
-                line_dash="dash", 
-                line_color="red",
-                annotation_text="Threshold 95%"
-            )
-            fig_autocorr.add_hline(
-                y=-significant_threshold, 
-                line_dash="dash", 
-                line_color="red"
-            )
-            fig_autocorr.update_layout(
-                title="Função de Autocorrelação",
-                xaxis_title="Lag",
-                yaxis_title="Correlação",
-                height=350
-            )
-            st.plotly_chart(fig_autocorr, use_container_width=True, key='autocorr_plot')
-        
-        # ============================================================
-        # 5. ANÁLISE DE PADRÕES TEMPORAIS
-        # ============================================================
-        st.subheader("⏰ 5. Padrões Temporais Recorrentes")
-        
-        # Análise por hora do dia
-        hourly_pattern = df_sorted.groupby('hour').size()
-        hourly_pattern = hourly_pattern.reindex(range(24), fill_value=0)
-        
-        # Análise por dia da semana
-        daily_pattern = df_sorted.groupby('day_of_week').size()
-        daily_pattern = daily_pattern.reindex(range(7), fill_value=0)
-        
-        # Análise por dia do mês
-        df_sorted['day_of_month'] = df_sorted['created_on'].dt.day
-        monthly_pattern = df_sorted.groupby('day_of_month').size()
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Padrão horário
-            fig_hour = go.Figure()
-            fig_hour.add_trace(go.Bar(
-                x=list(range(24)),
-                y=hourly_pattern.values,
-                marker_color=['red' if v > hourly_pattern.mean() + hourly_pattern.std() else 'lightblue' 
-                            for v in hourly_pattern.values]
-            ))
-            fig_hour.update_layout(
-                title="Padrão de Recorrência por Hora",
-                xaxis_title="Hora do Dia",
-                yaxis_title="Ocorrências",
-                height=300
-            )
-            st.plotly_chart(fig_hour, use_container_width=True, key='hourly_pattern')
-            
-            # Detectar janelas horárias
-            peak_hours = hourly_pattern[hourly_pattern > hourly_pattern.mean() + hourly_pattern.std()].index.tolist()
-            if peak_hours:
-                st.success(f"🕐 **Horas de pico:** {', '.join([f'{h:02d}:00' for h in peak_hours])}")
-        
-        with col2:
-            # Padrão semanal
-            days_map = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
-            fig_day = go.Figure()
-            fig_day.add_trace(go.Bar(
-                x=days_map,
-                y=daily_pattern.values,
-                marker_color=['red' if v > daily_pattern.mean() + daily_pattern.std() else 'lightgreen' 
-                            for v in daily_pattern.values]
-            ))
-            fig_day.update_layout(
-                title="Padrão de Recorrência por Dia",
-                xaxis_title="Dia da Semana",
-                yaxis_title="Ocorrências",
-                height=300
-            )
-            st.plotly_chart(fig_day, use_container_width=True, key='daily_pattern')
-            
-            # Detectar dias recorrentes
-            peak_days = daily_pattern[daily_pattern > daily_pattern.mean() + daily_pattern.std()].index.tolist()
-            if peak_days:
-                st.success(f"📅 **Dias de pico:** {', '.join([days_map[d] for d in peak_days])}")
-        
-        # ============================================================
-        # 6. DETECÇÃO DE CLUSTERS TEMPORAIS
-        # ============================================================
-        st.subheader("🎯 6. Detecção de Clusters Temporais")
-        
-        if len(df_sorted) >= 10:
-            # Usar DBSCAN para encontrar clusters temporais
-            from sklearn.cluster import DBSCAN
-            
-            # Preparar dados para clustering (timestamp em horas desde o início)
-            first_timestamp = df_sorted['timestamp'].min()
-            time_features = ((df_sorted['timestamp'] - first_timestamp) / 3600).values.reshape(-1, 1)
-            
-            # Determinar eps baseado na mediana dos intervalos
-            eps_value = np.median(intervals_hours) * 2
-            
-            # Aplicar DBSCAN
-            dbscan = DBSCAN(eps=eps_value, min_samples=3)
-            clusters = dbscan.fit_predict(time_features)
-            
-            n_clusters = len(set(clusters)) - (1 if -1 in clusters else 0)
-            n_noise = list(clusters).count(-1)
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("🎯 Clusters Detectados", n_clusters)
-            with col2:
-                st.metric("📊 Alertas em Clusters", len(clusters) - n_noise)
-            with col3:
-                st.metric("🔴 Alertas Isolados", n_noise)
-            
-            if n_clusters > 0:
-                st.success(f"✅ Identificados **{n_clusters} clusters temporais** distintos")
-                
-                # Análise de cada cluster
-                cluster_info = []
-                for cluster_id in set(clusters):
-                    if cluster_id != -1:
-                        cluster_mask = clusters == cluster_id
-                        cluster_times = df_sorted[cluster_mask]['created_on']
-                        cluster_info.append({
-                            'Cluster': cluster_id,
-                            'Tamanho': cluster_mask.sum(),
-                            'Início': cluster_times.min().strftime('%Y-%m-%d %H:%M'),
-                            'Fim': cluster_times.max().strftime('%Y-%m-%d %H:%M'),
-                            'Duração (h)': (cluster_times.max() - cluster_times.min()).total_seconds() / 3600
-                        })
-                
-                if cluster_info:
-                    cluster_df = pd.DataFrame(cluster_info)
-                    st.dataframe(cluster_df, use_container_width=True)
-                    
-                    # Calcular intervalo entre clusters
-                    if len(cluster_info) > 1:
-                        inter_cluster_intervals = []
-                        for i in range(len(cluster_info) - 1):
-                            end_current = pd.to_datetime(cluster_info[i]['Fim'])
-                            start_next = pd.to_datetime(cluster_info[i+1]['Início'])
-                            interval_hours = (start_next - end_current).total_seconds() / 3600
-                            inter_cluster_intervals.append(interval_hours)
-                        
-                        avg_inter_cluster = np.mean(inter_cluster_intervals)
-                        std_inter_cluster = np.std(inter_cluster_intervals)
-                        
-                        st.info(f"📊 **Intervalo médio entre clusters:** {avg_inter_cluster:.1f}h ± {std_inter_cluster:.1f}h")
-                        
-                        if std_inter_cluster / avg_inter_cluster < 0.3:
-                            st.success("✅ **Clusters aparecem em intervalos regulares** - forte indício de recorrência")
-        
-        # ============================================================
-        # 7. RESUMO E DIAGNÓSTICO FINAL
-        # ============================================================
-        st.subheader("📋 7. Diagnóstico Final de Recorrência")
-        
-        # Calcular score final de recorrência
-        recurrence_indicators = []
-        recurrence_score = 0
-        
-        # Indicador 1: Regularidade dos intervalos
-        if cv < 0.5:
-            recurrence_indicators.append("✅ Intervalos regulares")
-            recurrence_score += 25
-        else:
-            recurrence_indicators.append("❌ Intervalos irregulares")
-        
-        # Indicador 2: Periodicidade detectada
-        if 'dominant_periods' in locals() and len(dominant_periods) > 0:
-            recurrence_indicators.append("✅ Periodicidade detectada via FFT")
-            recurrence_score += 25
-        else:
-            recurrence_indicators.append("❌ Sem periodicidade clara")
-        
-        # Indicador 3: Autocorrelação significativa
-        if 'significant_peaks' in locals() and significant_peaks:
-            recurrence_indicators.append("✅ Autocorrelação significativa")
-            recurrence_score += 25
-        else:
-            recurrence_indicators.append("❌ Sem autocorrelação")
-        
-        # Indicador 4: Clusters temporais regulares
-        if 'n_clusters' in locals() and n_clusters > 1:
-            recurrence_indicators.append("✅ Clusters temporais identificados")
-            recurrence_score += 25
-        else:
-            recurrence_indicators.append("❌ Sem clusters temporais")
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.write("**📊 Indicadores de Recorrência:**")
-            for indicator in recurrence_indicators:
-                st.write(f"• {indicator}")
-            
-            st.write("\n**🎯 Diagnóstico:**")
-            if recurrence_score >= 75:
-                st.success("**ALTA RECORRÊNCIA** - Padrão altamente previsível")
-                st.write("💡 **Recomendação:** Ideal para automação e agendamento preventivo")
-            elif recurrence_score >= 50:
-                st.warning("**RECORRÊNCIA MODERADA** - Padrão parcialmente previsível")
-                st.write("💡 **Recomendação:** Monitorar tendências e considerar automação parcial")
-            elif recurrence_score >= 25:
-                st.info("**BAIXA RECORRÊNCIA** - Padrão pouco previsível")
-                st.write("💡 **Recomendação:** Investigar causas múltiplas e variáveis")
-            else:
-                st.error("**SEM RECORRÊNCIA** - Comportamento aleatório")
-                st.write("💡 **Recomendação:** Análise caso a caso e investigação de causas raiz")
-        
-        with col2:
-            fig_score = go.Figure(go.Indicator(
-                mode = "gauge+number+delta",
-                value = recurrence_score,
-                title = {'text': "Score de Recorrência"},
-                delta = {'reference': 50},
-                gauge = {
-                    'axis': {'range': [0, 100]},
-                    'bar': {'color': "darkblue"},
-                    'steps': [
-                        {'range': [0, 25], 'color': "lightgray"},
-                        {'range': [25, 50], 'color': "gray"},
-                        {'range': [50, 75], 'color': "lightblue"},
-                        {'range': [75, 100], 'color': "blue"}
-                    ],
-                    'threshold': {
-                        'line': {'color': "red", 'width': 4},
-                        'thickness': 0.75,
-                        'value': 75
-                    }
-                }
-            ))
-            fig_score.update_layout(height=300)
-            st.plotly_chart(fig_score, use_container_width=True, key='recurrence_score')
-        
-        # ============================================================
-        # 8. PREDIÇÃO DE PRÓXIMA OCORRÊNCIA
-        # ============================================================
-        if recurrence_score >= 50 and len(intervals_hours) >= 3:
-            st.subheader("🔮 8. Predição de Próxima Ocorrência")
-            
-            last_alert_time = df_sorted['created_on'].max()
-            
-            # Método 1: Baseado na média
-            pred_mean = last_alert_time + pd.Timedelta(hours=np.mean(intervals_hours))
-            
-            # Método 2: Baseado na mediana
-            pred_median = last_alert_time + pd.Timedelta(hours=np.median(intervals_hours))
-            
-            # Método 3: Baseado no último intervalo
-            pred_last = last_alert_time + pd.Timedelta(hours=intervals_hours[-1])
-            
-            # Intervalo de confiança
-            confidence_interval = 1.96 * np.std(intervals_hours) / np.sqrt(len(intervals_hours))
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("📊 Predição (Média)", pred_mean.strftime('%d/%m %H:%M'))
-            with col2:
-                st.metric("📊 Predição (Mediana)", pred_median.strftime('%d/%m %H:%M'))
-            with col3:
-                st.metric("📊 Predição (Último)", pred_last.strftime('%d/%m %H:%M'))
-            
-            st.info(f"📈 **Intervalo de Confiança (95%):** ± {confidence_interval:.1f} horas")
-            
-            # Se houver padrão horário forte, ajustar predição
-            if peak_hours:
-                st.write(f"💡 **Ajuste sugerido:** Considerar horários de pico às {', '.join([f'{h:02d}:00' for h in peak_hours[:3]])}")
-
-        
-        st.subheader("💥 9. Detecção de Bursts (Rajadas)")
-        
-        # Detectar bursts usando método de Kleinberg
-        burst_threshold = np.percentile(intervals_hours, 25)  # Quartil inferior
-        
-        # Identificar sequências de intervalos curtos
-        burst_sequences = []
-        current_burst = []
-        
-        for i, interval in enumerate(intervals_hours):
-            if interval < burst_threshold:
-                if not current_burst:
-                    current_burst = [i]
-                current_burst.append(i + 1)
-            else:
-                if len(current_burst) >= 3:  # Mínimo de 3 alertas para considerar burst
-                    burst_sequences.append(current_burst)
-                current_burst = []
-        
-        if len(current_burst) >= 3:
-            burst_sequences.append(current_burst)
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("💥 Bursts Detectados", len(burst_sequences))
-        
-        with col2:
-            if burst_sequences:
-                avg_burst_size = np.mean([len(b) for b in burst_sequences])
-                st.metric("📊 Tamanho Médio", f"{avg_burst_size:.1f} alertas")
-            else:
-                st.metric("📊 Tamanho Médio", "N/A")
-        
-        with col3:
-            if burst_sequences:
-                max_burst_size = max([len(b) for b in burst_sequences])
-                st.metric("🔥 Maior Burst", f"{max_burst_size} alertas")
-            else:
-                st.metric("🔥 Maior Burst", "N/A")
-        
-        if burst_sequences:
-            st.warning(f"⚠️ **Padrão de Rajadas Detectado:** {len(burst_sequences)} bursts identificados")
-            
-            # Análise temporal dos bursts
-            burst_times = []
-            for burst in burst_sequences:
-                burst_start_idx = burst[0]
-                if burst_start_idx < len(df_sorted) - 1:
-                    burst_time = df_sorted.iloc[burst_start_idx]['created_on']
-                    burst_times.append(burst_time)
-            
-            if len(burst_times) > 1:
-                burst_df = pd.DataFrame({'burst_time': burst_times})
-                burst_df['hour'] = burst_df['burst_time'].dt.hour
-                burst_df['day_of_week'] = burst_df['burst_time'].dt.dayofweek
-                
-                burst_hour_pattern = burst_df['hour'].value_counts().head(3)
-                if not burst_hour_pattern.empty:
-                    st.info(f"🕐 **Horários com mais bursts:** {', '.join([f'{h:02d}:00' for h in burst_hour_pattern.index])}")
-        else:
-            st.success("✅ Sem padrão de rajadas - distribuição uniforme")
-        
-        # ============================================================
-        # 10. ANÁLISE DE SAZONALIDADE AVANÇADA
-        # ============================================================
-        st.subheader("🌡️ 10. Análise de Sazonalidade")
-        
-        # Verificar se temos dados suficientes para análise sazonal
-        date_range = (df_sorted['created_on'].max() - df_sorted['created_on'].min()).days
-        
-        if date_range >= 30:  # Pelo menos 30 dias de dados
-            # Análise mensal
-            df_sorted['month'] = df_sorted['created_on'].dt.month
-            df_sorted['week_of_year'] = df_sorted['created_on'].dt.isocalendar().week
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if date_range >= 90:  # 3+ meses para análise mensal
-                    monthly_pattern = df_sorted.groupby('month').size()
-                    
-                    fig_month = go.Figure()
-                    months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 
-                            'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-                    
-                    month_values = [monthly_pattern.get(i+1, 0) for i in range(12)]
-                    fig_month.add_trace(go.Bar(
-                        x=months,
-                        y=month_values,
-                        marker_color=['red' if v > np.mean([x for x in month_values if x > 0]) * 1.5 else 'lightblue' 
-                                    for v in month_values]
-                    ))
-                    fig_month.update_layout(
-                        title="Padrão Mensal",
-                        xaxis_title="Mês",
-                        yaxis_title="Ocorrências",
-                        height=300
-                    )
-                    st.plotly_chart(fig_month, use_container_width=True, key='monthly_pattern')
-                    
-                    # Detectar meses anômalos
-                    active_months = [i for i, v in enumerate(month_values) if v > 0]
-                    if active_months and len(active_months) >= 3:
-                        active_values = [month_values[i] for i in active_months]
-                        threshold = np.mean(active_values) + 1.5 * np.std(active_values)
-                        anomaly_months = [months[i] for i, v in enumerate(month_values) if v > threshold]
-                        if anomaly_months:
-                            st.warning(f"📅 **Meses anômalos:** {', '.join(anomaly_months)}")
-            
-            with col2:
-                # Análise por semana do ano
-                weekly_pattern = df_sorted.groupby('week_of_year').size()
-                
-                if len(weekly_pattern) >= 4:
-                    fig_week = go.Figure()
-                    fig_week.add_trace(go.Scatter(
-                        x=weekly_pattern.index,
-                        y=weekly_pattern.values,
-                        mode='lines+markers',
-                        fill='tozeroy'
-                    ))
-                    fig_week.update_layout(
-                        title="Padrão por Semana do Ano",
-                        xaxis_title="Semana",
-                        yaxis_title="Ocorrências",
-                        height=300
-                    )
-                    st.plotly_chart(fig_week, use_container_width=True, key='weekly_pattern')
-                    
-                    # Calcular tendência
-                    from scipy import stats as scipy_stats
-                    weeks = weekly_pattern.index.values
-                    counts = weekly_pattern.values
-                    slope, intercept, r_value, p_value, std_err = scipy_stats.linregress(weeks, counts)
-                    
-                    if p_value < 0.05:
-                        if slope > 0:
-                            st.warning("📈 **Tendência crescente** detectada ao longo do tempo")
-                        else:
-                            st.success("📉 **Tendência decrescente** detectada ao longo do tempo")
-                    else:
-                        st.info("➡️ **Sem tendência significativa** ao longo do tempo")
-        
-        # ============================================================
-        # 11. ANÁLISE DE ENTROPIA E COMPLEXIDADE
-        # ============================================================
-        st.subheader("🧬 11. Análise de Entropia e Complexidade")
-        
-        # Calcular entropia de Shannon dos intervalos
-        if len(intervals_hours) >= 10:
-            # Discretizar intervalos em bins
-            n_bins = min(10, len(intervals_hours) // 3)
-            hist, bin_edges = np.histogram(intervals_hours, bins=n_bins)
-            
-            # Calcular probabilidades
-            probs = hist / hist.sum()
-            probs = probs[probs > 0]  # Remover zeros
-            
-            # Entropia de Shannon
-            entropy = -np.sum(probs * np.log2(probs))
-            max_entropy = np.log2(n_bins)
-            normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("📊 Entropia", f"{entropy:.2f} bits")
-            
-            with col2:
-                st.metric("📈 Entropia Normalizada", f"{normalized_entropy:.2%}")
-            
-            with col3:
-                # Classificação baseada em entropia
-                if normalized_entropy < 0.3:
-                    complexity = "Muito Baixa"
-                    complexity_color = "🟢"
-                    complexity_desc = "Padrão muito previsível"
-                elif normalized_entropy < 0.5:
-                    complexity = "Baixa"
-                    complexity_color = "🟢"
-                    complexity_desc = "Padrão previsível"
-                elif normalized_entropy < 0.7:
-                    complexity = "Média"
-                    complexity_color = "🟡"
-                    complexity_desc = "Complexidade moderada"
-                elif normalized_entropy < 0.85:
-                    complexity = "Alta"
-                    complexity_color = "🟠"
-                    complexity_desc = "Padrão complexo"
-                else:
-                    complexity = "Muito Alta"
-                    complexity_color = "🔴"
-                    complexity_desc = "Comportamento caótico"
-                
-                st.metric("🧬 Complexidade", f"{complexity_color} {complexity}")
-            
-            st.info(f"💡 **Interpretação:** {complexity_desc}")
-            
-            # Sample Entropy (medida de regularidade)
-            def sample_entropy(data, m=2, r=0.2):
-                """Calcula Sample Entropy - medida de irregularidade"""
-                N = len(data)
-                if N < m + 1:
-                    return float('nan')
-                
-                def _maxdist(x_i, x_j):
-                    return max([abs(ua - va) for ua, va in zip(x_i, x_j)])
-                
-                def _phi(m):
-                    patterns = np.array([data[i:i+m] for i in range(N - m + 1)])
-                    C = 0
-                    for i in range(N - m + 1):
-                        template = patterns[i]
-                        matches = 0
-                        for j in range(N - m + 1):
-                            if i != j and _maxdist(template, patterns[j]) <= r * np.std(data):
-                                matches += 1
-                        if matches > 0:
-                            C += matches / (N - m)
-                    return C / (N - m + 1) if (N - m + 1) > 0 else 0
-                
-                phi_m = _phi(m)
-                phi_m_plus_1 = _phi(m + 1)
-                
-                if phi_m == 0 or phi_m_plus_1 == 0:
-                    return float('inf')
-                
-                return -np.log(phi_m_plus_1 / phi_m)
-            
-            if len(intervals_hours) >= 20:
-                samp_ent = sample_entropy(intervals_hours)
-                if not np.isnan(samp_ent) and not np.isinf(samp_ent):
-                    st.write(f"**📏 Sample Entropy:** {samp_ent:.3f}")
-                    if samp_ent < 0.5:
-                        st.success("✅ Alta regularidade - padrão muito consistente")
-                    elif samp_ent < 1.0:
-                        st.info("📊 Regularidade moderada")
-                    else:
-                        st.warning("⚠️ Baixa regularidade - padrão irregular")
-        
-        # ============================================================
-        # 12. MATRIZ DE TRANSIÇÃO DE ESTADOS
-        # ============================================================
-        st.subheader("🔄 12. Análise de Transição de Estados")
-        
-        if len(intervals_hours) >= 5:
-            # Definir estados baseados em quartis
-            q1 = np.percentile(intervals_hours, 25)
-            q2 = np.percentile(intervals_hours, 50)
-            q3 = np.percentile(intervals_hours, 75)
-            
-            def categorize_interval(interval):
-                if interval <= q1:
-                    return 'Muito Rápido'
-                elif interval <= q2:
-                    return 'Rápido'
-                elif interval <= q3:
-                    return 'Normal'
-                else:
-                    return 'Lento'
-            
-            # Categorizar intervalos
-            states = [categorize_interval(i) for i in intervals_hours]
-            
-            # Criar matriz de transição
-            state_labels = ['Muito Rápido', 'Rápido', 'Normal', 'Lento']
-            transition_matrix = np.zeros((4, 4))
-            state_to_idx = {s: i for i, s in enumerate(state_labels)}
-            
-            for i in range(len(states) - 1):
-                current_state = state_to_idx[states[i]]
-                next_state = state_to_idx[states[i + 1]]
-                transition_matrix[current_state, next_state] += 1
-            
-            # Normalizar para obter probabilidades
-            row_sums = transition_matrix.sum(axis=1, keepdims=True)
-            row_sums[row_sums == 0] = 1  # Evitar divisão por zero
-            transition_probs = transition_matrix / row_sums
-            
-            # Visualizar matriz de transição
-            fig_matrix = go.Figure(data=go.Heatmap(
-                z=transition_probs,
-                x=state_labels,
-                y=state_labels,
-                text=np.round(transition_probs, 2),
-                texttemplate='%{text}',
-                colorscale='Blues',
-                showscale=True
-            ))
-            
-            fig_matrix.update_layout(
-                title="Matriz de Transição de Estados (Probabilidades)",
-                xaxis_title="Próximo Estado",
-                yaxis_title="Estado Atual",
-                height=400
-            )
-            
-            st.plotly_chart(fig_matrix, use_container_width=True, key='transition_matrix')
-            
-            # Identificar transições mais prováveis
-            max_prob_transitions = []
-            for i, current in enumerate(state_labels):
-                if row_sums[i] > 0:
-                    most_likely = state_labels[np.argmax(transition_probs[i])]
-                    prob = np.max(transition_probs[i])
-                    if prob > 0.4:  # Threshold de 40%
-                        max_prob_transitions.append(f"{current} → {most_likely} ({prob:.0%})")
-            
-            if max_prob_transitions:
-                st.success("**🎯 Transições mais prováveis:**")
-                for transition in max_prob_transitions:
-                    st.write(f"• {transition}")
-            
-            # Calcular estado estacionário (se existir)
-            eigenvalues, eigenvectors = np.linalg.eig(transition_probs.T)
-            stationary_idx = np.argmax(np.abs(eigenvalues))
-            
-            if np.abs(eigenvalues[stationary_idx] - 1.0) < 0.01:
-                stationary = np.real(eigenvectors[:, stationary_idx])
-                stationary = stationary / stationary.sum()
-                
-                st.info("**📊 Distribuição de Estado Estacionário (longo prazo):**")
-                for i, state in enumerate(state_labels):
-                    if stationary[i] > 0.05:  # Mostrar apenas estados relevantes
-                        st.write(f"• {state}: {stationary[i]:.1%}")
-        
-        # ============================================================
-        # 13. ANÁLISE DE PONTOS DE MUDANÇA (CHANGE POINTS)
-        # ============================================================
-        st.subheader("🔀 13. Detecção de Pontos de Mudança")
-        
-        has_change_points = False
-        if len(intervals_hours) >= 20:
-            # Usar CUSUM para detectar mudanças
-            cumsum = np.cumsum(intervals_hours - np.mean(intervals_hours))
-            
-            # Detectar pontos de mudança significativos
-            threshold = 2 * np.std(intervals_hours) * np.sqrt(len(intervals_hours))
-            
-            change_points = []
-            for i in range(1, len(cumsum) - 1):
-                if abs(cumsum[i] - cumsum[i-1]) > threshold/10 or abs(cumsum[i] - cumsum[i+1]) > threshold/10:
-                    # Verificar se é um ponto de mudança real
-                    before_mean = np.mean(intervals_hours[:i]) if i > 0 else 0
-                    after_mean = np.mean(intervals_hours[i:]) if i < len(intervals_hours) else 0
-                    
-                    if abs(before_mean - after_mean) > np.std(intervals_hours):
-                        change_points.append(i)
-            
-            # Remover pontos muito próximos
-            filtered_change_points = []
-            for cp in change_points:
-                if not filtered_change_points or cp - filtered_change_points[-1] > 5:
-                    filtered_change_points.append(cp)
-            
-            has_change_points = len(filtered_change_points) > 0
-            
-            if filtered_change_points:
-                st.warning(f"⚠️ **{len(filtered_change_points)} pontos de mudança detectados**")
-                
-                # Visualizar CUSUM com pontos de mudança
-                fig_cusum = go.Figure()
-                
-                fig_cusum.add_trace(go.Scatter(
-                    x=list(range(len(cumsum))),
-                    y=cumsum,
-                    mode='lines',
-                    name='CUSUM',
-                    line=dict(color='blue', width=2)
-                ))
-                
-                # Adicionar pontos de mudança
-                for cp in filtered_change_points:
-                    fig_cusum.add_vline(
-                        x=cp,
-                        line_dash="dash",
-                        line_color="red",
-                        annotation_text=f"CP {cp}"
-                    )
-                
-                fig_cusum.update_layout(
-                    title="CUSUM com Pontos de Mudança",
-                    xaxis_title="Índice",
-                    yaxis_title="CUSUM",
-                    height=350
-                )
-                
-                st.plotly_chart(fig_cusum, use_container_width=True, key='cusum_plot')
-                
-                # Analisar períodos entre mudanças
-                st.write("**📊 Análise dos Períodos:**")
-                periods = [0] + filtered_change_points + [len(intervals_hours)]
-                
-                for i in range(len(periods) - 1):
-                    start, end = periods[i], periods[i+1]
-                    period_data = intervals_hours[start:end]
-                    if len(period_data) > 0:
-                        st.write(f"• **Período {i+1}** ({end-start} alertas): "
-                            f"Intervalo médio = {np.mean(period_data):.1f}h ± {np.std(period_data):.1f}h")
-                
-                # Verificar se há evolução temporal
-                period_means = []
-                for i in range(len(periods) - 1):
-                    start, end = periods[i], periods[i+1]
-                    if end > start:
-                        period_means.append(np.mean(intervals_hours[start:end]))
-                
-                if len(period_means) > 1:
-                    if all(period_means[i] < period_means[i+1] for i in range(len(period_means)-1)):
-                        st.error("📈 **Padrão de degradação:** Intervalos aumentando ao longo do tempo")
-                    elif all(period_means[i] > period_means[i+1] for i in range(len(period_means)-1)):
-                        st.warning("📉 **Padrão de aceleração:** Intervalos diminuindo ao longo do tempo")
-                    else:
-                        st.info("🔄 **Padrão variável:** Mudanças não monotônicas")
-            else:
-                st.success("✅ Sem pontos de mudança significativos - comportamento estável")
-        
-        # ============================================================
-        # 14. CLASSIFICAÇÃO DEFINITIVA: REINCIDENTE vs NÃO REINCIDENTE
-        # ============================================================
-        st.markdown("---")
-        st.header("🎯 14. CLASSIFICAÇÃO FINAL: ALERTA REINCIDENTE?")
-        
-        # Coletar todas as métricas calculadas
-        reincidence_criteria = {}
-        reincidence_points = 0
-        max_points = 0
-        justifications = []
-        
-        # CRITÉRIO 1: Regularidade dos Intervalos (CV)
-        max_points += 20
-        if cv < 0.35:
-            reincidence_points += 20
-            reincidence_criteria['regularidade'] = 'ALTA'
-            justifications.append("✅ **Intervalos muito regulares** (CV < 0.35)")
-        elif cv < 0.65:
-            reincidence_points += 12
-            reincidence_criteria['regularidade'] = 'MODERADA'
-            justifications.append("🟡 **Intervalos moderadamente regulares** (CV < 0.65)")
-        else:
-            reincidence_points += 0
-            reincidence_criteria['regularidade'] = 'BAIXA'
-            justifications.append("❌ **Intervalos irregulares** (CV >= 0.65)")
-        
-        # CRITÉRIO 2: Score de Recorrência Global
-        max_points += 20
-        if recurrence_score >= 75:
-            reincidence_points += 20
-            reincidence_criteria['score_recorrencia'] = 'ALTO'
-            justifications.append(f"✅ **Score de recorrência alto** ({recurrence_score}/100)")
-        elif recurrence_score >= 50:
-            reincidence_points += 12
-            reincidence_criteria['score_recorrencia'] = 'MODERADO'
-            justifications.append(f"🟡 **Score de recorrência moderado** ({recurrence_score}/100)")
-        else:
-            reincidence_points += 0
-            reincidence_criteria['score_recorrencia'] = 'BAIXO'
-            justifications.append(f"❌ **Score de recorrência baixo** ({recurrence_score}/100)")
-        
-        # CRITÉRIO 3: Periodicidade Detectada (FFT)
-        max_points += 15
-        if 'dominant_periods' in locals() and len(dominant_periods) > 0:
-            reincidence_points += 15
-            reincidence_criteria['periodicidade'] = 'SIM'
-            justifications.append("✅ **Periodicidade clara detectada** (via FFT)")
-        else:
-            reincidence_points += 0
-            reincidence_criteria['periodicidade'] = 'NÃO'
-            justifications.append("❌ **Sem periodicidade detectável**")
-        
-        # CRITÉRIO 4: Autocorrelação Significativa
-        max_points += 15
-        if 'significant_peaks' in locals() and significant_peaks:
-            reincidence_points += 15
-            reincidence_criteria['autocorrelacao'] = 'SIM'
-            justifications.append("✅ **Autocorrelação significativa** (padrão repetitivo)")
-        else:
-            reincidence_points += 0
-            reincidence_criteria['autocorrelacao'] = 'NÃO'
-            justifications.append("❌ **Sem autocorrelação significativa**")
-        
-        # CRITÉRIO 5: Concentração Temporal (Hora/Dia)
-        max_points += 15
-        concentration_detected = False
-        
-        # Calcular concentração horária se ainda não foi calculada
-        if 'total_top_3_hours' not in locals():
-            hourly_dist = df_sorted['hour'].value_counts().sort_index()
-            if len(hourly_dist) > 0:
-                hourly_pct = (hourly_dist / hourly_dist.sum() * 100).round(2)
-                top_3_hours = hourly_pct.nlargest(3)
-                total_top_3_hours = top_3_hours.sum()
-            else:
-                total_top_3_hours = 0
-        
-        # Calcular concentração semanal se ainda não foi calculada
-        if 'total_top_3_days' not in locals():
-            daily_dist = df_sorted['day_name'].value_counts()
-            if len(daily_dist) > 0:
-                days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                daily_dist_ordered = daily_dist.reindex(days_order).fillna(0)
-                daily_pct = (daily_dist_ordered / daily_dist_ordered.sum() * 100).round(2)
-                top_3_days = daily_pct.nlargest(3)
-                total_top_3_days = top_3_days.sum()
-            else:
-                total_top_3_days = 0
-        
-        # Avaliar concentração
-        if total_top_3_hours > 50:
-            concentration_detected = True
-            justifications.append(f"✅ **Concentração horária forte** ({total_top_3_hours:.0f}% em top 3 horas)")
-        if total_top_3_days > 50:
-            concentration_detected = True
-            justifications.append(f"✅ **Concentração semanal forte** ({total_top_3_days:.0f}% em top 3 dias)")
-        
-        if concentration_detected:
-            reincidence_points += 15
-            reincidence_criteria['concentracao_temporal'] = 'ALTA'
-        else:
-            reincidence_points += 0
-            reincidence_criteria['concentracao_temporal'] = 'BAIXA'
-            justifications.append("❌ **Sem concentração temporal clara**")
-        
-        # CRITÉRIO 6: Entropia (Previsibilidade)
-        max_points += 10
-        if 'normalized_entropy' in locals():
-            if normalized_entropy < 0.5:
-                reincidence_points += 10
-                reincidence_criteria['previsibilidade'] = 'ALTA'
-                justifications.append("✅ **Alta previsibilidade** (baixa entropia)")
-            elif normalized_entropy < 0.7:
-                reincidence_points += 5
-                reincidence_criteria['previsibilidade'] = 'MODERADA'
-                justifications.append("🟡 **Previsibilidade moderada**")
-            else:
-                reincidence_points += 0
-                reincidence_criteria['previsibilidade'] = 'BAIXA'
-                justifications.append("❌ **Baixa previsibilidade** (alta entropia)")
-        
-        # CRITÉRIO 7: Ausência de Bursts Irregulares
-        max_points += 5
-        if 'burst_sequences' in locals():
-            if len(burst_sequences) == 0:
-                reincidence_points += 5
-                reincidence_criteria['bursts'] = 'AUSENTE'
-                justifications.append("✅ **Sem padrão de rajadas** (distribuição uniforme)")
-            else:
-                reincidence_points += 0
-                reincidence_criteria['bursts'] = 'PRESENTE'
-                justifications.append("❌ **Padrão de rajadas detectado** (comportamento irregular)")
-        
-        # Calcular percentual final
-        reincidence_percentage = (reincidence_points / max_points) * 100 if max_points > 0 else 0
-        
-        # REGRA DE CLASSIFICAÇÃO FINAL
-        st.subheader("📊 Resultado da Análise")
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            # Determinar classificação
-            if reincidence_percentage >= 70:
-                classification = "🔴 ALERTA REINCIDENTE"
-                classification_level = "ALTA"
-                color = "red"
-                recommendation = """
-                **Este alerta apresenta forte padrão de reincidência.**
-                
-                **Ações Recomendadas:**
-                - ✅ Implementar automação de resposta
-                - ✅ Criar runbook detalhado
-                - ✅ Considerar supressão inteligente em horários previsíveis
-                - ✅ Investigar causa raiz para correção definitiva
-                - ✅ Monitorar desvios do padrão esperado
-                """
-            elif reincidence_percentage >= 50:
-                classification = "🟠 ALERTA PARCIALMENTE REINCIDENTE"
-                classification_level = "MODERADA"
-                color = "orange"
-                recommendation = """
-                **Este alerta apresenta padrão moderado de reincidência.**
-                
-                **Ações Recomendadas:**
-                - 🔍 Investigar causas múltiplas possíveis
-                - 📊 Monitorar evolução do padrão
-                - ⚙️ Considerar automação parcial
-                - 🎯 Focar em períodos de maior concentração
-                """
-            else:
-                classification = "🟢 ALERTA NÃO REINCIDENTE"
-                classification_level = "BAIXA"
-                color = "green"
-                recommendation = """
-                **Este alerta NÃO apresenta padrão consistente de reincidência.**
-                
-                **Ações Recomendadas:**
-                - 🔍 Análise caso a caso necessária
-                - ❓ Investigar se são falsos positivos
-                - 🔧 Revisar configuração do alerta
-                - 📉 Considerar desativação se pouco relevante
-                - 🎯 Tratar cada ocorrência individualmente
-                """
-            
-            # Mostrar classificação com destaque
-            st.markdown(f"### {classification}")
-            st.markdown(f"**Nível de Reincidência:** {classification_level}")
-            st.markdown(f"**Score:** {reincidence_percentage:.1f}% ({reincidence_points}/{max_points} pontos)")
-            
-            st.markdown("---")
-            st.markdown("#### 📋 Justificativas:")
-            for justification in justifications:
-                st.markdown(f"- {justification}")
-            
-            st.markdown("---")
-            st.markdown("#### 💡 Recomendações:")
-            st.info(recommendation)
-        
-        with col2:
-            # Gauge visual
-            fig_final = go.Figure(go.Indicator(
-                mode = "gauge+number+delta",
-                value = reincidence_percentage,
-                title = {'text': "Score de Reincidência", 'font': {'size': 20}},
-                delta = {'reference': 50, 'increasing': {'color': "red"}},
-                gauge = {
-                    'axis': {'range': [0, 100]},
-                    'bar': {'color': color},
-                    'steps': [
-                        {'range': [0, 50], 'color': "lightgray"},
-                        {'range': [50, 70], 'color': "lightyellow"},
-                        {'range': [70, 100], 'color': "lightcoral"}
-                    ],
-                    'threshold': {
-                        'line': {'color': "darkred", 'width': 4},
-                        'thickness': 0.75,
-                        'value': 70
-                    }
-                }
-            ))
-            fig_final.update_layout(height=400)
-            st.plotly_chart(fig_final, use_container_width=True, key='reincidence_gauge')
-            
-            # Resumo dos critérios
-            st.markdown("#### 📊 Critérios Avaliados:")
-            criteria_status = {
-                'Regularidade': reincidence_criteria.get('regularidade', 'N/A'),
-                'Score Global': reincidence_criteria.get('score_recorrencia', 'N/A'),
-                'Periodicidade': reincidence_criteria.get('periodicidade', 'N/A'),
-                'Autocorrelação': reincidence_criteria.get('autocorrelacao', 'N/A'),
-                'Concentração': reincidence_criteria.get('concentracao_temporal', 'N/A'),
-                'Previsibilidade': reincidence_criteria.get('previsibilidade', 'N/A'),
-                'Bursts': reincidence_criteria.get('bursts', 'N/A')
-            }
-            
-            for criterion, status in criteria_status.items():
-                if status in ['ALTA', 'SIM', 'AUSENTE']:
-                    icon = "✅"
-                elif status in ['MODERADA', 'MODERADO']:
-                    icon = "🟡"
-                else:
-                    icon = "❌"
-                st.markdown(f"{icon} **{criterion}:** {status}")
-        
-        # Exportar resultado da classificação
-        st.markdown("---")
-        st.subheader("📥 Exportar Resultado")
-        
-        result_data = {
-            'alert_id': [self.alert_id],
-            'classificacao': [classification],
-            'nivel_reincidencia': [classification_level],
-            'score_percentual': [f"{reincidence_percentage:.1f}%"],
-            'pontos': [f"{reincidence_points}/{max_points}"],
-            'regularidade_cv': [f"{cv:.3f}"],
-            'score_recorrencia': [recurrence_score],
-            **{f'criterio_{k}': [v] for k, v in reincidence_criteria.items()}
-        }
-        
-        result_df = pd.DataFrame(result_data)
-        
-        csv_result = result_df.to_csv(index=False)
-        st.download_button(
-            label="⬇️ Baixar Classificação (CSV)",
-            data=csv_result,
-            file_name=f"classificacao_reincidencia_{self.alert_id}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv"
-        )
 def main():
     st.title("🚨 Analisador de Alertas")
     st.markdown("### Análise individual, global e agrupamento inteligente de alertas")
@@ -2746,7 +2311,7 @@ def main():
                             tab1, tab2, tab3 = st.tabs([
                                 "🔍 Isolados vs Agrupados",
                                 "📊 Básico", 
-                                "⏱️ Análise de Intervalos"
+                                "⏱️ Análise Avançada de Reincidência"
                             ])
 
                             with tab1:
@@ -2791,15 +2356,33 @@ def main():
             Analise um alerta específico em 3 abas:
             1. **Isolados vs Agrupados:** Classificação e timeline
             2. **Básico:** Estatísticas gerais
-            3. **Análise de Intervalos:** Regularidade e padrões de tempo
+            3. **Análise Avançada de Reincidência:** 14 análises completas incluindo:
+               - Estatísticas de intervalos
+               - Classificação de regularidade
+               - Periodicidade (FFT)
+               - Autocorrelação
+               - Padrões temporais
+               - Clusters temporais
+               - Detecção de bursts
+               - Sazonalidade
+               - Pontos de mudança
+               - Detecção de anomalias
+               - Análise de tendência
+               - Score de previsibilidade
+               - Análise de estabilidade
+               - Pattern mining
+               - **Classificação final de reincidência com score 0-100**
             
             ### Principais Funcionalidades:
             - ✨ Identificação automática de grupos contínuos
             - 📊 Visualização detalhada de grupos com timeline
             - 📈 Análise de recorrência (hora/dia) para alertas contínuos
             - 🎯 Clustering inteligente por perfil de comportamento
-            - ⏱️ Detecção de padrões de intervalos (fixo, semi-regular, irregular)
+            - ⏱️ **14 análises avançadas de reincidência com ML**
             - 🔴 Separação clara entre alertas isolados e contínuos
+            - 🏆 **Score final de reincidência (0-100) com priorização**
+            - 🔮 Predição de próxima ocorrência
+            - 📥 Exportação de relatórios completos
             
             ### Colunas necessárias no CSV:
             - `u_alert_id`: Identificador único do alerta
