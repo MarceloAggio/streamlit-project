@@ -13,8 +13,10 @@ from sklearn.ensemble import IsolationForest
 import io
 import warnings
 from multiprocessing import Pool, cpu_count
+import holidays
 from functools import partial
 from collections import defaultdict, Counter
+import math
 
 warnings.filterwarnings('ignore')
 
@@ -26,11 +28,11 @@ st.set_page_config(
 )
 
 # ============================================================
-# CLASSE DE ANÁLISE AVANÇADA DE RECORRÊNCIA
+# CLASSE DE ANÁLISE AVANÇADA DE RECORRÊNCIA - VERSÃO COMPLETA
 # ============================================================
 
 class AdvancedRecurrenceAnalyzer:
-    """Analisador avançado de padrões de reincidência com otimizações"""
+    """Analisador avançado de padrões de reincidência com todas as análises integradas"""
     
     def __init__(self, df, alert_id):
         self.df = df.copy() if df is not None else None
@@ -73,7 +75,7 @@ class AdvancedRecurrenceAnalyzer:
         return df
     
     def analyze(self):
-        """Método principal de análise"""
+        """Método principal de análise - VERSÃO COMPLETA"""
         st.header("🔄 Análise Avançada de Reincidência Temporal")
         
         df = self._prepare_data()
@@ -105,8 +107,21 @@ class AdvancedRecurrenceAnalyzer:
         results['stability'] = self._analyze_stability(intervals_hours, df)
         results['pattern_mining'] = self._mine_patterns(intervals_hours)
         
+        # NOVAS ANÁLISES AVANÇADAS
+        results['contextual'] = self._analyze_contextual_dependencies(df)
+        results['vulnerability'] = self._identify_vulnerability_windows(df, intervals_hours)
+        results['maturity'] = self._analyze_pattern_maturity(df, intervals_hours)
+        results['prediction_confidence'] = self._calculate_prediction_confidence(intervals_hours)
+        results['multivariate'] = self._analyze_multivariate_patterns(df)
+        results['markov'] = self._analyze_markov_chains(intervals_hours)
+        results['randomness'] = self._advanced_randomness_tests(intervals_hours)
+        
         # Classificação final consolidada
         self._final_classification(results, df, intervals_hours)
+    
+    # ============================================================
+    # ANÁLISES BÁSICAS (mantidas do código original)
+    # ============================================================
     
     def _analyze_basic_statistics(self, intervals):
         """Estatísticas básicas otimizadas"""
@@ -592,46 +607,649 @@ class AdvancedRecurrenceAnalyzer:
         
         return {'frequent_patterns': frequent, 'has_patterns': len(frequent) > 0}
     
+    # ============================================================
+    # NOVAS ANÁLISES AVANÇADAS
+    # ============================================================
+    
+    def _analyze_contextual_dependencies(self, df):
+        """Análise de dependências contextuais"""
+        st.subheader("🌐 11. Dependências Contextuais")
+        
+        try:
+            br_holidays = holidays.Brazil(years=df['created_on'].dt.year.unique())
+            df['is_holiday'] = df['created_on'].dt.date.apply(lambda x: x in br_holidays)
+        except:
+            df['is_holiday'] = False
+            st.info("⚠️ Biblioteca holidays não disponível - análise de feriados desabilitada")
+        
+        business_days = df[~df['is_weekend'] & ~df['is_holiday']]
+        weekend_days = df[df['is_weekend']]
+        holiday_days = df[df['is_holiday']]
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("📊 Dias Úteis", f"{len(business_days)/len(df)*100:.1f}%")
+        col2.metric("🎉 Fins de Semana", f"{len(weekend_days)/len(df)*100:.1f}%")
+        col3.metric("🎊 Feriados", f"{len(holiday_days)/len(df)*100:.1f}%")
+        
+        if len(holiday_days) > 0:
+            st.warning(f"⚠️ {len(holiday_days)} alertas em feriados detectados")
+        
+        return {
+            'holiday_correlation': len(holiday_days) / len(df) if len(df) > 0 else 0,
+            'weekend_correlation': len(weekend_days) / len(df) if len(df) > 0 else 0
+        }
+    
+    def _identify_vulnerability_windows(self, df, intervals):
+        """Identifica janelas temporais de alta vulnerabilidade"""
+        st.subheader("🎯 12. Janelas de Vulnerabilidade")
+        
+        # Criar grade horária/semanal
+        vulnerability_matrix = df.groupby(['day_of_week', 'hour']).size().reset_index(name='count')
+        vulnerability_matrix['risk_score'] = (
+            vulnerability_matrix['count'] / vulnerability_matrix['count'].max() * 100
+        )
+        
+        # Identificar top 5 janelas mais críticas
+        top_windows = vulnerability_matrix.nlargest(5, 'risk_score')
+        
+        day_map = {0: 'Seg', 1: 'Ter', 2: 'Qua', 3: 'Qui', 4: 'Sex', 5: 'Sáb', 6: 'Dom'}
+        
+        st.write("**🔴 Top 5 Janelas Críticas:**")
+        for idx, row in top_windows.iterrows():
+            day = day_map[row['day_of_week']]
+            hour = int(row['hour'])
+            risk = row['risk_score']
+            st.write(f"• **{day} {hour:02d}:00** - Score: {risk:.1f} ({row['count']} alertas)")
+        
+        return {'top_windows': top_windows.to_dict('records')}
+    
+    def _analyze_pattern_maturity(self, df, intervals):
+        """Analisa maturidade e evolução do padrão"""
+        st.subheader("📈 13. Maturidade do Padrão")
+        
+        # Dividir em períodos
+        n_periods = 4
+        period_size = len(intervals) // n_periods
+        
+        if period_size < 2:
+            st.info("Período insuficiente para análise de maturidade")
+            return {}
+        
+        periods_stats = []
+        for i in range(n_periods):
+            start = i * period_size
+            end = (i + 1) * period_size if i < n_periods - 1 else len(intervals)
+            period_intervals = intervals[start:end]
+            
+            periods_stats.append({
+                'period': i + 1,
+                'mean': np.mean(period_intervals),
+                'cv': np.std(period_intervals) / np.mean(period_intervals) if np.mean(period_intervals) > 0 else 0
+            })
+        
+        periods_df = pd.DataFrame(periods_stats)
+        
+        # Visualizar evolução
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=periods_df['period'],
+            y=periods_df['cv'],
+            mode='lines+markers',
+            name='CV (Variabilidade)',
+            line=dict(color='red', width=3)
+        ))
+        fig.update_layout(
+            title="Evolução da Variabilidade ao Longo do Tempo",
+            xaxis_title="Período",
+            yaxis_title="CV (Coeficiente de Variação)",
+            height=300
+        )
+        st.plotly_chart(fig, use_container_width=True, key='maturity')
+        
+        # Tendência de maturidade
+        slope = np.polyfit(periods_df['period'], periods_df['cv'], 1)[0]
+        
+        if slope < -0.05:
+            st.success("✅ **Padrão amadurecendo**: Variabilidade decrescente")
+            maturity = "maturing"
+        elif slope > 0.05:
+            st.warning("⚠️ **Padrão degradando**: Variabilidade crescente")
+            maturity = "degrading"
+        else:
+            st.info("📊 **Padrão estável**: Variabilidade constante")
+            maturity = "stable"
+        
+        return {'maturity': maturity, 'slope': slope}
+    
+    def _calculate_prediction_confidence(self, intervals):
+        """Calcula confiança estatística da predição"""
+        if len(intervals) < 10:
+            return {'confidence': 'low', 'score': 0}
+        
+        # Calcular múltiplas métricas de confiança
+        cv = np.std(intervals) / np.mean(intervals)
+        n_samples = len(intervals)
+        
+        # Score baseado em:
+        # 1. Regularidade (CV baixo = alta confiança)
+        # 2. Quantidade de dados (mais dados = mais confiança)
+        # 3. Tendência estacionária
+        
+        regularity_score = max(0, 100 - cv * 100)
+        sample_score = min(100, (n_samples / 50) * 100)
+        
+        # Teste de estacionariedade simples (variância constante)
+        mid = len(intervals) // 2
+        var1 = np.var(intervals[:mid])
+        var2 = np.var(intervals[mid:])
+        var_ratio = min(var1, var2) / max(var1, var2) if max(var1, var2) > 0 else 0
+        stationarity_score = var_ratio * 100
+        
+        confidence_score = (regularity_score * 0.5 + 
+                           sample_score * 0.3 + 
+                           stationarity_score * 0.2)
+        
+        if confidence_score > 70:
+            confidence = 'high'
+        elif confidence_score > 40:
+            confidence = 'medium'
+        else:
+            confidence = 'low'
+        
+        return {'confidence': confidence, 'score': confidence_score}
+    
+    def _analyze_multivariate_patterns(self, df):
+        """Análise de padrões multivariados"""
+        st.subheader("🔬 14. Padrões Multivariados")
+        
+        # Criar matriz de correlação entre features temporais
+        features = df[['hour', 'day_of_week', 'is_weekend', 'is_business_hours']].copy()
+        features['alert'] = 1
+        
+        correlation_matrix = features.corr()
+        
+        fig = go.Figure(data=go.Heatmap(
+            z=correlation_matrix.values,
+            x=correlation_matrix.columns,
+            y=correlation_matrix.columns,
+            colorscale='RdBu',
+            zmid=0
+        ))
+        fig.update_layout(title="Matriz de Correlação", height=400)
+        st.plotly_chart(fig, use_container_width=True, key='multivariate')
+        
+        # Identificar correlações fortes
+        strong_corr = []
+        for i in range(len(correlation_matrix.columns)):
+            for j in range(i+1, len(correlation_matrix.columns)):
+                corr = correlation_matrix.iloc[i, j]
+                if abs(corr) > 0.5:
+                    strong_corr.append({
+                        'var1': correlation_matrix.columns[i],
+                        'var2': correlation_matrix.columns[j],
+                        'correlation': corr
+                    })
+        
+        if strong_corr:
+            st.success(f"✅ {len(strong_corr)} correlações fortes detectadas")
+            for item in strong_corr:
+                st.write(f"• **{item['var1']}** ↔ **{item['var2']}**: {item['correlation']:.2f}")
+        
+        return {'strong_correlations': strong_corr}
+    
+    def _analyze_markov_chains(self, intervals):
+        """Análise de Cadeias de Markov para padrões de transição"""
+        st.subheader("🔗 15. Análise de Cadeias de Markov")
+        
+        if len(intervals) < 20:
+            st.info("Mínimo de 20 intervalos necessário")
+            return {}
+        
+        # Discretizar intervalos em estados
+        q25, q50, q75 = np.percentile(intervals, [25, 50, 75])
+        
+        def interval_to_state(val):
+            if val <= q25:
+                return 'Muito Curto'
+            elif val <= q50:
+                return 'Curto'
+            elif val <= q75:
+                return 'Normal'
+            else:
+                return 'Longo'
+        
+        states = [interval_to_state(i) for i in intervals]
+        state_labels = ['Muito Curto', 'Curto', 'Normal', 'Longo']
+        
+        # Construir matriz de transição
+        n_states = len(state_labels)
+        transition_matrix = np.zeros((n_states, n_states))
+        state_to_idx = {state: idx for idx, state in enumerate(state_labels)}
+        
+        for i in range(len(states) - 1):
+            from_state = state_to_idx[states[i]]
+            to_state = state_to_idx[states[i + 1]]
+            transition_matrix[from_state, to_state] += 1
+        
+        # Normalizar para probabilidades
+        row_sums = transition_matrix.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1
+        transition_probs = transition_matrix / row_sums
+        
+        # Visualizar matriz de transição
+        fig = go.Figure(data=go.Heatmap(
+            z=transition_probs,
+            x=state_labels,
+            y=state_labels,
+            text=np.round(transition_probs, 2),
+            texttemplate='%{text:.2f}',
+            textfont={"size": 12},
+            colorscale='Blues',
+            colorbar=dict(title="Probabilidade")
+        ))
+        
+        fig.update_layout(
+            title="Matriz de Transição de Estados (Markov)",
+            xaxis_title="Estado Seguinte",
+            yaxis_title="Estado Atual",
+            height=400
+        )
+        st.plotly_chart(fig, use_container_width=True, key='markov_matrix')
+        
+        # Calcular distribuição estacionária
+        try:
+            eigenvalues, eigenvectors = np.linalg.eig(transition_probs.T)
+            stationary_idx = np.argmin(np.abs(eigenvalues - 1))
+            stationary_dist = np.real(eigenvectors[:, stationary_idx])
+            stationary_dist = stationary_dist / stationary_dist.sum()
+            
+            st.write("**📊 Distribuição Estacionária (Longo Prazo):**")
+            col1, col2, col3, col4 = st.columns(4)
+            cols = [col1, col2, col3, col4]
+            for idx, (state, prob) in enumerate(zip(state_labels, stationary_dist)):
+                cols[idx].metric(state, f"{prob*100:.1f}%")
+            
+        except:
+            st.warning("⚠️ Não foi possível calcular distribuição estacionária")
+            stationary_dist = None
+        
+        # Identificar transições mais prováveis
+        st.write("**🔥 Top 5 Transições Mais Prováveis:**")
+        transitions = []
+        for i in range(n_states):
+            for j in range(n_states):
+                if transition_probs[i, j] > 0:
+                    transitions.append({
+                        'from': state_labels[i],
+                        'to': state_labels[j],
+                        'prob': transition_probs[i, j]
+                    })
+        
+        transitions_sorted = sorted(transitions, key=lambda x: x['prob'], reverse=True)[:5]
+        for trans in transitions_sorted:
+            st.write(f"• **{trans['from']}** → **{trans['to']}**: {trans['prob']*100:.1f}%")
+        
+        # Calcular entropia da cadeia
+        entropy = 0
+        for i in range(n_states):
+            for j in range(n_states):
+                if transition_probs[i, j] > 0:
+                    entropy += transition_probs[i, j] * np.log2(transition_probs[i, j])
+        entropy = -entropy / n_states
+        
+        max_entropy = np.log2(n_states)
+        predictability = (1 - entropy / max_entropy) * 100 if max_entropy > 0 else 0
+        
+        st.metric("🎯 Previsibilidade Markoviana", f"{predictability:.1f}%")
+        
+        if predictability > 60:
+            st.success("✅ **Alto padrão markoviano**: Estado atual prevê bem o próximo")
+        elif predictability > 30:
+            st.info("📊 **Padrão markoviano moderado**")
+        else:
+            st.warning("⚠️ **Baixo padrão markoviano**: Transições mais aleatórias")
+        
+        return {
+            'transition_matrix': transition_probs.tolist(),
+            'stationary_distribution': stationary_dist.tolist() if stationary_dist is not None else None,
+            'markov_predictability': predictability,
+            'top_transitions': transitions_sorted
+        }
+    
+    def _advanced_randomness_tests(self, intervals):
+        """Bateria completa de testes de aleatoriedade"""
+        st.subheader("🎲 16. Testes Avançados de Aleatoriedade")
+        
+        if len(intervals) < 10:
+            st.info("Mínimo de 10 intervalos necessário")
+            return {}
+        
+        results = {}
+        
+        # ========================================
+        # 1. RUNS TEST (Wald-Wolfowitz)
+        # ========================================
+        st.write("**1️⃣ Runs Test (Sequências)**")
+        
+        median = np.median(intervals)
+        runs = []
+        current_run = []
+        
+        for val in intervals:
+            if val > median:
+                if current_run and current_run[0] <= median:
+                    runs.append(len(current_run))
+                    current_run = [val]
+                else:
+                    current_run.append(val)
+            else:
+                if current_run and current_run[0] > median:
+                    runs.append(len(current_run))
+                    current_run = [val]
+                else:
+                    current_run.append(val)
+        
+        if current_run:
+            runs.append(len(current_run))
+        
+        n_runs = len(runs)
+        n_above = np.sum(intervals > median)
+        n_below = len(intervals) - n_above
+        
+        # Estatística do teste
+        expected_runs = (2 * n_above * n_below) / len(intervals) + 1
+        var_runs = (2 * n_above * n_below * (2 * n_above * n_below - len(intervals))) / \
+                   (len(intervals)**2 * (len(intervals) - 1))
+        
+        if var_runs > 0:
+            z_score = (n_runs - expected_runs) / np.sqrt(var_runs)
+            p_value = 2 * (1 - stats.norm.cdf(abs(z_score)))
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Runs Observados", n_runs)
+            col2.metric("Runs Esperados", f"{expected_runs:.1f}")
+            col3.metric("P-valor", f"{p_value:.4f}")
+            
+            if p_value > 0.05:
+                st.success("✅ **Não rejeita aleatoriedade** (sequências normais)")
+                results['runs_test'] = 'random'
+            else:
+                st.warning("⚠️ **Rejeita aleatoriedade** (padrão nas sequências)")
+                results['runs_test'] = 'non-random'
+        
+        # ========================================
+        # 2. PERMUTATION ENTROPY TEST
+        # ========================================
+        st.write("**2️⃣ Permutation Entropy (Complexidade)**")
+        
+        def permutation_entropy(series, order=3, delay=1):
+            """Calcula entropia de permutação"""
+            n = len(series)
+            permutations = []
+            
+            for i in range(n - delay * (order - 1)):
+                pattern = []
+                for j in range(order):
+                    pattern.append(series[i + j * delay])
+                
+                # Converter para permutação
+                sorted_idx = np.argsort(pattern)
+                perm = tuple(sorted_idx)
+                permutations.append(perm)
+            
+            # Calcular entropia
+            from collections import Counter
+            perm_counts = Counter(permutations)
+            probs = np.array(list(perm_counts.values())) / len(permutations)
+            entropy = -np.sum(probs * np.log2(probs))
+            
+            # Normalizar
+            max_entropy = np.log2(math.factorial(order))
+            normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
+            
+            return normalized_entropy
+        
+        if len(intervals) >= 10:
+            perm_entropy = permutation_entropy(intervals, order=3)
+            complexity_score = perm_entropy * 100
+            
+            col1, col2 = st.columns(2)
+            col1.metric("Entropia de Permutação", f"{perm_entropy:.3f}")
+            col2.metric("Score de Complexidade", f"{complexity_score:.1f}%")
+            
+            if complexity_score > 70:
+                st.success("✅ **Alta complexidade**: Padrão mais aleatório")
+                results['permutation_entropy'] = 'high'
+            elif complexity_score > 40:
+                st.info("📊 **Complexidade moderada**")
+                results['permutation_entropy'] = 'medium'
+            else:
+                st.warning("⚠️ **Baixa complexidade**: Padrão mais determinístico")
+                results['permutation_entropy'] = 'low'
+        
+        # ========================================
+        # 3. APPROXIMATE ENTROPY (ApEn)
+        # ========================================
+        st.write("**3️⃣ Approximate Entropy (Regularidade)**")
+        
+        def approximate_entropy(series, m=2, r=None):
+            """Calcula ApEn"""
+            n = len(series)
+            if r is None:
+                r = 0.2 * np.std(series)
+            
+            def _phi(m):
+                patterns = np.array([series[i:i+m] for i in range(n - m + 1)])
+                counts = np.zeros(len(patterns))
+                
+                for i, pattern in enumerate(patterns):
+                    distances = np.max(np.abs(patterns - pattern), axis=1)
+                    counts[i] = np.sum(distances <= r)
+                
+                phi = np.sum(np.log(counts / (n - m + 1))) / (n - m + 1)
+                return phi
+            
+            return _phi(m) - _phi(m + 1)
+        
+        if len(intervals) >= 20:
+            apen = approximate_entropy(intervals)
+            
+            st.metric("ApEn Score", f"{apen:.4f}")
+            
+            if apen > 1.0:
+                st.success("✅ **Alta irregularidade**: Mais aleatório")
+                results['approximate_entropy'] = 'high'
+            elif apen > 0.5:
+                st.info("📊 **Irregularidade moderada**")
+                results['approximate_entropy'] = 'medium'
+            else:
+                st.warning("⚠️ **Baixa irregularidade**: Mais previsível")
+                results['approximate_entropy'] = 'low'
+        
+        # ========================================
+        # 4. SERIAL CORRELATION TEST (Ljung-Box)
+        # ========================================
+        st.write("**4️⃣ Serial Correlation (Ljung-Box)**")
+        
+        from scipy.stats import chi2
+        
+        def ljung_box_test(series, lags=10):
+            """Teste de Ljung-Box para autocorrelação"""
+            n = len(series)
+            acf_values = []
+            
+            for lag in range(1, min(lags + 1, n)):
+                corr = np.corrcoef(series[:-lag], series[lag:])[0, 1]
+                acf_values.append(corr)
+            
+            acf_values = np.array(acf_values)
+            lb_stat = n * (n + 2) * np.sum(acf_values**2 / (n - np.arange(1, len(acf_values) + 1)))
+            p_value = 1 - chi2.cdf(lb_stat, len(acf_values))
+            
+            return lb_stat, p_value
+        
+        if len(intervals) >= 15:
+            lb_stat, lb_pval = ljung_box_test(intervals, lags=min(10, len(intervals)//2))
+            
+            col1, col2 = st.columns(2)
+            col1.metric("Ljung-Box Statistic", f"{lb_stat:.2f}")
+            col2.metric("P-valor", f"{lb_pval:.4f}")
+            
+            if lb_pval > 0.05:
+                st.success("✅ **Sem autocorrelação significativa**: Comportamento independente")
+                results['ljung_box'] = 'independent'
+            else:
+                st.warning("⚠️ **Autocorrelação detectada**: Valores dependentes")
+                results['ljung_box'] = 'dependent'
+        
+        # ========================================
+        # 5. HURST EXPONENT (Persistência)
+        # ========================================
+        st.write("**5️⃣ Hurst Exponent (Memória de Longo Prazo)**")
+        
+        def hurst_exponent(series):
+            """Calcula o expoente de Hurst"""
+            n = len(series)
+            if n < 20:
+                return None
+            
+            lags = range(2, min(n//2, 20))
+            tau = []
+            
+            for lag in lags:
+                # Particionar série
+                n_partitions = n // lag
+                partitions = [series[i*lag:(i+1)*lag] for i in range(n_partitions)]
+                
+                # Calcular R/S para cada partição
+                rs_values = []
+                for partition in partitions:
+                    if len(partition) == 0:
+                        continue
+                    mean = np.mean(partition)
+                    cumsum = np.cumsum(partition - mean)
+                    R = np.max(cumsum) - np.min(cumsum)
+                    S = np.std(partition)
+                    if S > 0:
+                        rs_values.append(R / S)
+                
+                if rs_values:
+                    tau.append(np.mean(rs_values))
+            
+            # Regressão log-log
+            if len(tau) > 2:
+                log_lags = np.log(list(lags[:len(tau)]))
+                log_tau = np.log(tau)
+                hurst = np.polyfit(log_lags, log_tau, 1)[0]
+                return hurst
+            return None
+        
+        if len(intervals) >= 20:
+            hurst = hurst_exponent(intervals)
+            
+            if hurst is not None:
+                st.metric("Hurst Exponent", f"{hurst:.3f}")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                if hurst < 0.45:
+                    col1.success("📉 **Anti-persistente** (H < 0.5)")
+                    st.write("• Reversão à média: valores altos seguidos de baixos")
+                    results['hurst'] = 'anti-persistent'
+                elif hurst > 0.55:
+                    col3.warning("📈 **Persistente** (H > 0.5)")
+                    st.write("• Tendência: valores altos seguidos de altos")
+                    results['hurst'] = 'persistent'
+                else:
+                    col2.info("🎲 **Random Walk** (H ≈ 0.5)")
+                    st.write("• Movimento browniano: comportamento aleatório")
+                    results['hurst'] = 'random'
+        
+        # ========================================
+        # RESUMO FINAL DOS TESTES
+        # ========================================
+        st.markdown("---")
+        st.write("**📊 Resumo da Bateria de Testes:**")
+        
+        randomness_score = 0
+        max_tests = 5
+        
+        if results.get('runs_test') == 'random':
+            randomness_score += 1
+        if results.get('permutation_entropy') == 'high':
+            randomness_score += 1
+        if results.get('approximate_entropy') == 'high':
+            randomness_score += 1
+        if results.get('ljung_box') == 'independent':
+            randomness_score += 1
+        if results.get('hurst') == 'random':
+            randomness_score += 1
+        
+        randomness_pct = (randomness_score / max_tests) * 100
+        
+        col1, col2 = st.columns(2)
+        col1.metric("Score de Aleatoriedade", f"{randomness_pct:.0f}%")
+        col2.metric("Testes Aprovados", f"{randomness_score}/{max_tests}")
+        
+        if randomness_pct >= 60:
+            st.success("✅ **COMPORTAMENTO ALEATÓRIO**: Padrão não determinístico")
+            final_classification = 'random'
+        elif randomness_pct >= 40:
+            st.info("📊 **COMPORTAMENTO MISTO**: Parcialmente previsível")
+            final_classification = 'mixed'
+        else:
+            st.warning("⚠️ **COMPORTAMENTO DETERMINÍSTICO**: Alto padrão estruturado")
+            final_classification = 'deterministic'
+        
+        results['randomness_score'] = randomness_pct
+        results['final_classification'] = final_classification
+        
+        return results
+    
+    # ============================================================
+    # CLASSIFICAÇÃO FINAL COMPLETA
+    # ============================================================
+    
     def _final_classification(self, results, df, intervals):
-        """Classificação final consolidada"""
+        """Classificação final consolidada - VERSÃO COMPLETA"""
         st.markdown("---")
         st.header("🎯 CLASSIFICAÇÃO FINAL DE REINCIDÊNCIA")
         
         score = 0
-        max_score = 100
+        max_score = 145  # Score máximo atualizado
         criteria = []
         
-        # 1. Regularidade (20 pontos)
+        # 1. Regularidade (15 pontos)
         cv = results['basic_stats']['cv']
         if cv < 0.35:
-            score += 20
-            criteria.append(("✅ Alta regularidade", 20))
+            score += 15
+            criteria.append(("✅ Alta regularidade", 15))
         elif cv < 0.65:
-            score += 12
-            criteria.append(("🟡 Regularidade moderada", 12))
+            score += 9
+            criteria.append(("🟡 Regularidade moderada", 9))
         else:
             criteria.append(("❌ Baixa regularidade", 0))
         
-        # 2. Periodicidade (15 pontos)
+        # 2. Periodicidade (10 pontos)
         if results.get('periodicity', {}).get('has_periodicity', False):
-            score += 15
-            criteria.append(("✅ Periodicidade detectada", 15))
+            score += 10
+            criteria.append(("✅ Periodicidade detectada", 10))
         else:
             criteria.append(("❌ Sem periodicidade", 0))
         
-        # 3. Autocorrelação (15 pontos)
+        # 3. Autocorrelação (10 pontos)
         if results.get('autocorr', {}).get('has_autocorr', False):
-            score += 15
-            criteria.append(("✅ Autocorrelação significativa", 15))
+            score += 10
+            criteria.append(("✅ Autocorrelação significativa", 10))
         else:
             criteria.append(("❌ Sem autocorrelação", 0))
         
-        # 4. Concentração temporal (15 pontos)
+        # 4. Concentração temporal (10 pontos)
         hourly_conc = results.get('temporal', {}).get('hourly_concentration', 0)
         daily_conc = results.get('temporal', {}).get('daily_concentration', 0)
         if hourly_conc > 50 or daily_conc > 50:
-            score += 15
-            criteria.append(("✅ Alta concentração temporal", 15))
+            score += 10
+            criteria.append(("✅ Alta concentração temporal", 10))
         else:
             criteria.append(("❌ Distribuição uniforme", 0))
         
@@ -664,20 +1282,77 @@ class AdvancedRecurrenceAnalyzer:
         else:
             criteria.append(("⚠️ Presença de bursts", 0))
         
+        # 9. Dependências contextuais (10 pontos)
+        holiday_corr = results.get('contextual', {}).get('holiday_correlation', 0)
+        if holiday_corr < 0.3:
+            score += 10
+            criteria.append(("✅ Sem correlação com feriados", 10))
+        else:
+            criteria.append(("⚠️ Alta correlação com feriados", 0))
+        
+        # 10. Maturidade do padrão (10 pontos)
+        maturity = results.get('maturity', {}).get('maturity', 'stable')
+        if maturity == 'maturing':
+            score += 10
+            criteria.append(("✅ Padrão amadurecendo", 10))
+        elif maturity == 'stable':
+            score += 5
+            criteria.append(("🟡 Padrão estável", 5))
+        else:
+            criteria.append(("❌ Padrão degradando", 0))
+        
+        # 11. Confiança de predição (10 pontos)
+        pred_conf = results.get('prediction_confidence', {}).get('score', 0)
+        if pred_conf > 70:
+            score += 10
+            criteria.append(("✅ Alta confiança preditiva", 10))
+        elif pred_conf > 40:
+            score += 5
+            criteria.append(("🟡 Média confiança preditiva", 5))
+        else:
+            criteria.append(("❌ Baixa confiança preditiva", 0))
+        
+        # 12. Padrão Markoviano (15 pontos)
+        markov_pred = results.get('markov', {}).get('markov_predictability', 0)
+        if markov_pred > 60:
+            score += 15
+            criteria.append(("✅ Alto padrão markoviano", 15))
+        elif markov_pred > 30:
+            score += 8
+            criteria.append(("🟡 Padrão markoviano moderado", 8))
+        else:
+            criteria.append(("❌ Baixo padrão markoviano", 0))
+        
+        # 13. Aleatoriedade (penaliza aleatoriedade) (15 pontos)
+        randomness = results.get('randomness', {}).get('randomness_score', 50)
+        determinism_score = 100 - randomness  # Inverter: quanto mais determinístico, melhor
+        
+        if determinism_score > 60:
+            score += 15
+            criteria.append(("✅ Comportamento determinístico", 15))
+        elif determinism_score > 40:
+            score += 8
+            criteria.append(("🟡 Comportamento misto", 8))
+        else:
+            criteria.append(("❌ Comportamento aleatório", 0))
+        
+        # Normalizar para 0-100
+        final_score = (score / max_score) * 100
+        
         # Determinar classificação
-        if score >= 70:
+        if final_score >= 70:
             classification = "🔴 ALERTA REINCIDENTE"
             level = "CRÍTICO"
             color = "red"
             recommendation = "**Ação Imediata:** Criar automação, runbook e investigar causa raiz"
             priority = "P1"
-        elif score >= 50:
+        elif final_score >= 50:
             classification = "🟠 PARCIALMENTE REINCIDENTE"
             level = "ALTO"
             color = "orange"
             recommendation = "**Ação Recomendada:** Monitorar evolução e considerar automação"
             priority = "P2"
-        elif score >= 30:
+        elif final_score >= 30:
             classification = "🟡 PADRÃO DETECTÁVEL"
             level = "MÉDIO"
             color = "yellow"
@@ -695,7 +1370,7 @@ class AdvancedRecurrenceAnalyzer:
         with col1:
             st.markdown(f"### {classification}")
             st.markdown(f"**Nível:** {level} | **Prioridade:** {priority}")
-            st.metric("Score de Reincidência", f"{score}/100", delta=level)
+            st.metric("Score de Reincidência", f"{final_score:.0f}/100", delta=level)
             
             st.markdown("#### 📊 Critérios Avaliados")
             for criterion, points in criteria:
@@ -704,15 +1379,16 @@ class AdvancedRecurrenceAnalyzer:
             st.info(recommendation)
             
             st.markdown("#### 📈 Métricas Complementares")
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b, col_c, col_d = st.columns(4)
             col_a.metric("CV", f"{cv:.2f}")
             col_b.metric("Previsibilidade", f"{pred_score:.0f}%")
-            col_c.metric("Anomalias", f"{results.get('anomalies', {}).get('anomaly_rate', 0):.1f}%")
+            col_c.metric("Markov", f"{markov_pred:.0f}%")
+            col_d.metric("Determinismo", f"{determinism_score:.0f}%")
         
         with col2:
             fig = go.Figure(go.Indicator(
                 mode="gauge+number",
-                value=score,
+                value=final_score,
                 title={'text': "Score Final", 'font': {'size': 20}},
                 gauge={
                     'axis': {'range': [0, 100]},
@@ -733,8 +1409,43 @@ class AdvancedRecurrenceAnalyzer:
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True, key='final_gauge')
         
-        # Predição
-        if score >= 50:
+        # ============================================================
+        # PLANO DE AÇÃO RECOMENDADO
+        # ============================================================
+        
+        st.markdown("---")
+        st.subheader("📋 Plano de Ação Recomendado")
+        
+        actions = []
+        
+        if final_score >= 70:
+            actions.extend([
+                ("🚨 URGENTE", "Criar automação imediata", "P0", "24h"),
+                ("📖 CRÍTICO", "Documentar runbook completo", "P0", "48h"),
+                ("🔍 CRÍTICO", "Análise de causa raiz", "P0", "72h"),
+                ("⚙️ ALTO", "Implementar supressão inteligente", "P1", "1 semana")
+            ])
+        elif final_score >= 50:
+            actions.extend([
+                ("📊 ALTO", "Monitoramento contínuo", "P1", "Contínuo"),
+                ("📖 MÉDIO", "Criar documentação básica", "P2", "1 semana"),
+                ("🔧 MÉDIO", "Avaliar ajuste de thresholds", "P2", "2 semanas")
+            ])
+        else:
+            actions.extend([
+                ("🔍 MÉDIO", "Análise caso a caso", "P3", "1 mês"),
+                ("📊 BAIXO", "Revisão de configuração", "P3", "Trimestral")
+            ])
+        
+        # Tabela de ações
+        actions_df = pd.DataFrame(actions, columns=['Prioridade', 'Ação', 'Nível', 'Prazo'])
+        st.table(actions_df)
+        
+        # ============================================================
+        # PREDIÇÃO COM CONFIANÇA
+        # ============================================================
+        
+        if final_score >= 50:
             st.markdown("---")
             st.subheader("🔮 Predição de Próxima Ocorrência")
             
@@ -745,12 +1456,31 @@ class AdvancedRecurrenceAnalyzer:
             pred_time = last_alert + pd.Timedelta(hours=mean_interval)
             conf_interval = 1.96 * std_interval
             
-            col1, col2, col3 = st.columns(3)
+            # ✅ CORREÇÃO: Definir confidence_label ANTES de usar
+            pred_confidence = results.get('prediction_confidence', {})
+            confidence_label = pred_confidence.get('confidence', 'medium')
+            confidence_score = pred_confidence.get('score', 0)
+            
+            confidence_emoji = {
+                'high': '🟢', 
+                'medium': '🟡', 
+                'low': '🔴'
+            }
+            
+            col1, col2, col3, col4 = st.columns(4)
             col1.metric("Predição", pred_time.strftime('%d/%m %H:%M'))
             col2.metric("Intervalo", f"{mean_interval:.1f}h")
             col3.metric("Confiança (95%)", f"± {conf_interval:.1f}h")
+            col4.metric("Nível Confiança", 
+                       f"{confidence_emoji.get(confidence_label, '🟡')} {confidence_label.upper()}")
+            
+            # Mostrar score de confiança adicional
+            st.info(f"📊 **Score de Confiança Preditiva:** {confidence_score:.1f}%")
         
-        # Exportar
+        # ============================================================
+        # EXPORTAR RELATÓRIO COMPLETO
+        # ============================================================
+        
         st.markdown("---")
         export_data = {
             'alert_id': self.alert_id,
@@ -758,13 +1488,18 @@ class AdvancedRecurrenceAnalyzer:
             'classificacao': classification,
             'nivel': level,
             'prioridade': priority,
-            'score': score,
+            'score': final_score,
             'cv': cv,
             'periodicidade': results.get('periodicity', {}).get('has_periodicity', False),
             'autocorrelacao': results.get('autocorr', {}).get('has_autocorr', False),
             'clusters': results.get('clusters', {}).get('n_clusters', 0),
             'previsibilidade': pred_score,
             'anomalias_pct': results.get('anomalies', {}).get('anomaly_rate', 0),
+            'markov_pred': markov_pred,
+            'randomness_score': randomness,
+            'determinism_score': determinism_score,
+            'maturity': maturity,
+            'prediction_confidence': confidence_label,
             'recomendacao': recommendation
         }
         
@@ -781,7 +1516,7 @@ class AdvancedRecurrenceAnalyzer:
 
 
 # ============================================================
-# FUNÇÕES AUXILIARES DE AGRUPAMENTO (código original mantido)
+# FUNÇÕES AUXILIARES DE AGRUPAMENTO (mantidas do código original)
 # ============================================================
 
 def identify_alert_groups(alert_data, max_gap_hours=24, min_group_size=3, 
@@ -913,9 +1648,6 @@ def classify_alert_pattern(alert_data, max_gap_hours=24, min_group_size=3,
         'unique_days': unique_days
     }
 
-# ============================================================
-# FUNÇÕES DE PROCESSAMENTO (código original mantido)
-# ============================================================
 
 def process_single_alert(alert_id, df_original, max_gap_hours=24, min_group_size=3, 
                         spike_threshold_multiplier=5):
@@ -975,8 +1707,9 @@ def process_alert_chunk(alert_ids, df_original, max_gap_hours=24, min_group_size
             if (metrics := process_single_alert(alert_id, df_original, max_gap_hours, 
                                                min_group_size, spike_threshold_multiplier))]
 
+
 # ============================================================
-# CLASSE PRINCIPAL (mantida com integração da nova análise)
+# CLASSE PRINCIPAL (mantida do código original - continuação)
 # ============================================================
 
 class StreamlitAlertAnalyzer:
@@ -1114,17 +1847,13 @@ class StreamlitAlertAnalyzer:
         
         return len(self.df_all_alerts) > 0
 
-    # ============================================================
-    # MÉTODO ATUALIZADO - ANÁLISE DE RECORRÊNCIA TEMPORAL
-    # ============================================================
-
     def analyze_temporal_recurrence_patterns(self):
-        """Análise avançada de recorrência usando a nova classe"""
+        """Análise avançada de recorrência usando a nova classe COMPLETA"""
         analyzer = AdvancedRecurrenceAnalyzer(self.df, self.alert_id)
         analyzer.analyze()
 
     # ============================================================
-    # MÉTODOS RESTANTES (mantidos do código original)
+    # MÉTODOS RESTANTES DA CLASSE (mantidos do código original)
     # ============================================================
 
     def show_isolated_vs_continuous_analysis(self):
@@ -1613,9 +2342,6 @@ class StreamlitAlertAnalyzer:
         df_continuous_details['day_of_week'] = df_continuous_details['created_on'].dt.dayofweek
         df_continuous_details['day_name'] = df_continuous_details['created_on'].dt.day_name()
 
-        # ============================================================
-        # ⏰ PADRÃO DE RECORRÊNCIA POR HORA
-        # ============================================================
         st.subheader("⏰ Padrão de Recorrência por Hora do Dia")
 
         hourly_dist = df_continuous_details['hour'].value_counts().sort_index()
@@ -1652,7 +2378,6 @@ class StreamlitAlertAnalyzer:
             st.metric("📊 % nesta Hora", f"{top_3_hours.values[0]:.1f}%")
             st.metric("🔝 Top 3 Horas (% total)", f"{total_top_3_hours:.1f}%")
 
-            # ✅ Classificação de concentração horária
             if total_top_3_hours > 60:
                 pattern_hour = "🔴 **Concentrado**"
                 hour_desc = "Alertas altamente concentrados em poucas horas"
@@ -1673,11 +2398,7 @@ class StreamlitAlertAnalyzer:
 
         st.markdown("---")
 
-        # ============================================================
-        # 📅 PADRÃO DE RECORRÊNCIA POR DIA DA SEMANA
-        # ============================================================
         st.subheader("📅 Padrão de Recorrência por Dia da Semana")
-
         daily_dist = df_continuous_details['day_name'].value_counts()
         days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         daily_dist_ordered = daily_dist.reindex(days_order).fillna(0)
@@ -1746,9 +2467,6 @@ class StreamlitAlertAnalyzer:
 
         st.markdown("---")
 
-        # ============================================================
-        # 🎯 RESUMO DO PADRÃO DE RECORRÊNCIA
-        # ============================================================
         st.subheader("🎯 Resumo do Padrão de Recorrência")
 
         col1, col2 = st.columns(2)
@@ -1774,7 +2492,6 @@ class StreamlitAlertAnalyzer:
         st.markdown("---")
         st.subheader("🏆 Padrão Dominante")
 
-
         if total_top_3_hours > total_top_3_days:
             st.success(f"⏰ **HORA DO DIA** é o padrão dominante ({total_top_3_hours:.1f}% vs {total_top_3_days:.1f}%)")
             st.write(f"Os alertas contínuos tendem a ocorrer principalmente no horário das **{top_3_hours.index[0]:02d}:00**")
@@ -1786,9 +2503,6 @@ class StreamlitAlertAnalyzer:
 
         st.markdown("---")
 
-        # ============================================================
-        # 🔥 MAPA DE CALOR - HORA × DIA DA SEMANA
-        # ============================================================
         st.subheader("🔥 Mapa de Calor: Hora × Dia da Semana")
 
         heatmap_data = df_continuous_details.groupby(['day_of_week', 'hour']).size().reset_index(name='count')
@@ -1813,10 +2527,6 @@ class StreamlitAlertAnalyzer:
         )
 
         st.plotly_chart(fig_heatmap, use_container_width=True, key='recurrence_heatmap')
-
-        # ============================================================
-        # ANÁLISE GLOBAL - VISÃO GERAL
-        # ============================================================
 
     def show_global_overview(self):
         st.subheader("📈 Visão Geral dos Alertas")
@@ -2196,11 +2906,15 @@ class StreamlitAlertAnalyzer:
                 hovermode='closest'
             )
             st.plotly_chart(fig, use_container_width=True, key='individual_alert_timeline')
-            
+
+
+# ============================================================
+# FUNÇÃO MAIN - COMPLETA
+# ============================================================
 
 def main():
-    st.title("🚨 Analisador de Alertas")
-    st.markdown("### Análise individual, global e agrupamento inteligente de alertas")
+    st.title("🚨 Analisador de Alertas - VERSÃO COMPLETA")
+    st.markdown("### Análise individual, global e agrupamento inteligente com 21 análises avançadas")
     st.sidebar.header("⚙️ Configurações")
     
     with st.sidebar.expander("🎛️ Parâmetros de Agrupamento", expanded=False):
@@ -2232,6 +2946,7 @@ def main():
         ["🌍 Análise Global", "🔍 Análise Individual"],
         help="Escolha entre analisar todos os alertas ou um alerta específico"
     )
+    
     uploaded_file = st.sidebar.file_uploader(
         "📁 Upload do arquivo CSV",
         type=['csv'],
@@ -2276,6 +2991,7 @@ def main():
                         with tab7:
                             if n_clusters:
                                 analyzer.show_cluster_recommendations()
+                        
                         st.sidebar.markdown("---")
                         st.sidebar.subheader("📥 Downloads")
                         csv_buffer = io.StringIO()
@@ -2288,7 +3004,8 @@ def main():
                         )
                     else:
                         st.error("❌ Não foi possível processar os dados para análise global")
-            else:
+            
+            else:  # Análise Individual
                 try:
                     id_counts = analyzer.df_original['u_alert_id'].value_counts()
                     id_options = [f"{uid} ({count} ocorrências)" for uid, count in id_counts.items()]
@@ -2311,7 +3028,7 @@ def main():
                             tab1, tab2, tab3 = st.tabs([
                                 "🔍 Isolados vs Agrupados",
                                 "📊 Básico", 
-                                "⏱️ Análise Avançada de Reincidência"
+                                "⏱️ Análise Avançada de Reincidência (21 Análises)"
                             ])
 
                             with tab1:
@@ -2338,9 +3055,9 @@ def main():
                     st.error(f"❌ Erro ao processar análise individual: {e}")
     else:
         st.info("👆 Faça upload de um arquivo CSV para começar a análise")
-        with st.expander("📖 Instruções de Uso"):
+        with st.expander("📖 Instruções de Uso - VERSÃO COMPLETA"):
             st.markdown("""
-            ### Como usar este analisador:
+            ### 🚀 Como usar este analisador COMPLETO:
             
             #### 🌍 **Análise Global**
             Analise todos os alertas com 7 abas:
@@ -2352,46 +3069,103 @@ def main():
             6. **Perfis:** Características de cada cluster
             7. **Recomendações:** Ações sugeridas
             
-            #### 🔍 **Análise Individual**
+            #### 🔍 **Análise Individual - 21 ANÁLISES AVANÇADAS**
             Analise um alerta específico em 3 abas:
-            1. **Isolados vs Agrupados:** Classificação e timeline
-            2. **Básico:** Estatísticas gerais
-            3. **Análise Avançada de Reincidência:** 14 análises completas incluindo:
-               - Estatísticas de intervalos
-               - Classificação de regularidade
-               - Periodicidade (FFT)
-               - Autocorrelação
-               - Padrões temporais
-               - Clusters temporais
-               - Detecção de bursts
-               - Sazonalidade
-               - Pontos de mudança
-               - Detecção de anomalias
-               - Análise de tendência
-               - Score de previsibilidade
-               - Análise de estabilidade
-               - Pattern mining
-               - **Classificação final de reincidência com score 0-100**
             
-            ### Principais Funcionalidades:
+            **1. Isolados vs Agrupados:** Classificação e timeline
+            
+            **2. Básico:** Estatísticas gerais
+            
+            **3. Análise Avançada de Reincidência (21 análises completas):**
+            
+            **Análises Estatísticas (1-10):**
+            - ✅ Estatísticas de intervalos
+            - ✅ Classificação de regularidade
+            - ✅ Periodicidade (FFT)
+            - ✅ Autocorrelação
+            - ✅ Padrões temporais
+            - ✅ Clusters temporais
+            - ✅ Detecção de bursts
+            - ✅ Sazonalidade
+            - ✅ Pontos de mudança
+            - ✅ Detecção de anomalias
+            
+            **Análises de Tendência (11-14):**
+            - ✅ Análise de tendência temporal
+            - ✅ Score de previsibilidade
+            - ✅ Análise de estabilidade
+            - ✅ Pattern mining (mineração de padrões)
+            
+            **Análises Contextuais (15-17):**
+            - ✅ Dependências contextuais (feriados, fins de semana)
+            - ✅ Janelas de vulnerabilidade (Top 5 horários críticos)
+            - ✅ Maturidade do padrão (evolução temporal)
+            
+            **Análises Preditivas (18-19):**
+            - ✅ Confiança de predição
+            - ✅ Padrões multivariados (correlações)
+            
+            **Análises Avançadas de ML (20-21):**
+            - ✅ **Cadeias de Markov** (matriz de transição, distribuição estacionária, previsibilidade markoviana)
+            - ✅ **Bateria de Testes de Aleatoriedade:**
+              - Runs Test (Wald-Wolfowitz)
+              - Permutation Entropy
+              - Approximate Entropy (ApEn)
+              - Serial Correlation (Ljung-Box)
+              - Hurst Exponent
+            
+            **🎯 Classificação Final de Reincidência:**
+            - Score 0-100 baseado em 13 critérios
+            - Classificação: Crítico (P1), Alto (P2), Médio (P3), Baixo (P4)
+            - Plano de ação recomendado
+            - Predição de próxima ocorrência com intervalo de confiança
+            - Exportação de relatório completo em CSV
+            
+            ### 🎖️ Principais Funcionalidades:
             - ✨ Identificação automática de grupos contínuos
             - 📊 Visualização detalhada de grupos com timeline
             - 📈 Análise de recorrência (hora/dia) para alertas contínuos
             - 🎯 Clustering inteligente por perfil de comportamento
-            - ⏱️ **14 análises avançadas de reincidência com ML**
+            - ⏱️ **21 análises avançadas de reincidência com ML**
             - 🔴 Separação clara entre alertas isolados e contínuos
-            - 🏆 **Score final de reincidência (0-100) com priorização**
-            - 🔮 Predição de próxima ocorrência
+            - 🏆 **Score final de reincidência (0-100) com 13 critérios**
+            - 🔗 **Análise de Cadeias de Markov**
+            - 🎲 **Bateria completa de 5 testes de aleatoriedade**
+            - 🌐 **Dependências contextuais (feriados, fins de semana)**
+            - 🎯 **Janelas de vulnerabilidade temporal**
+            - 📈 **Análise de maturidade do padrão**
+            - 🔮 Predição de próxima ocorrência com confiança
             - 📥 Exportação de relatórios completos
             
-            ### Colunas necessárias no CSV:
+            ### 📋 Colunas necessárias no CSV:
             - `u_alert_id`: Identificador único do alerta
             - `created_on`: Data e hora da criação do alerta
             
-            ### Parâmetros Configuráveis:
+            ### ⚙️ Parâmetros Configuráveis:
             - **Gap Máximo:** Tempo máximo entre alertas do mesmo grupo
             - **Tamanho Mínimo:** Quantidade mínima de alertas para formar um grupo
             - **Multiplicador de Spike:** Threshold para identificar dias com picos anormais
+            
+            ### 📊 Métricas de Score Final (145 pontos totais):
+            1. Regularidade (15 pts)
+            2. Periodicidade (10 pts)
+            3. Autocorrelação (10 pts)
+            4. Concentração temporal (10 pts)
+            5. Clusters (10 pts)
+            6. Previsibilidade (10 pts)
+            7. Estabilidade (10 pts)
+            8. Ausência de bursts (5 pts)
+            9. Dependências contextuais (10 pts)
+            10. Maturidade (10 pts)
+            11. Confiança preditiva (10 pts)
+            12. **Padrão Markoviano (15 pts)**
+            13. **Determinismo vs Aleatoriedade (15 pts)**
+            
+            ### 🎯 Classificações:
+            - **70-100 pts:** 🔴 ALERTA REINCIDENTE (P1 - Crítico)
+            - **50-69 pts:** 🟠 PARCIALMENTE REINCIDENTE (P2 - Alto)
+            - **30-49 pts:** 🟡 PADRÃO DETECTÁVEL (P3 - Médio)
+            - **0-29 pts:** 🟢 NÃO REINCIDENTE (P4 - Baixo)
             """)
 
 if __name__ == "__main__":
