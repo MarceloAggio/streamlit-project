@@ -2733,6 +2733,144 @@ class StreamlitAlertAnalyzer:
         if unique_days == 1:
             st.warning("⚠️ **ATENÇÃO:** Todos os alertas ocorreram em apenas 1 dia! Este alerta é classificado como ISOLADO.")
         
+        # ============================================================
+        # NOVA SEÇÃO: MÉDIAS DE FREQUÊNCIA
+        # ============================================================
+        st.markdown("---")
+        st.subheader("📊 Médias de Frequência de Incidentes")
+        
+        # Calcular médias
+        total_hours = period_days * 24
+        period_weeks = period_days / 7
+        period_months = period_days / 30.44  # Média de dias por mês
+        
+        avg_per_hour = total / total_hours if total_hours > 0 else 0
+        avg_per_week = total / period_weeks if period_weeks > 0 else 0
+        avg_per_month = total / period_months if period_months > 0 else 0
+        
+        # Exibir métricas em colunas
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "📅 Média por Dia", 
+                f"{avg_per_day:.2f}",
+                help=f"{total} incidentes em {period_days} dias"
+            )
+            if avg_per_day >= 10:
+                st.caption("🔴 Alta frequência diária")
+            elif avg_per_day >= 3:
+                st.caption("🟡 Frequência diária moderada")
+            else:
+                st.caption("🟢 Frequência diária baixa")
+        
+        with col2:
+            st.metric(
+                "🕐 Média por Hora", 
+                f"{avg_per_hour:.4f}",
+                help=f"{total} incidentes em {total_hours:.0f} horas"
+            )
+            if avg_per_hour >= 1:
+                st.caption("🔴 Mais de 1 por hora")
+            elif avg_per_hour >= 0.1:
+                st.caption("🟡 Múltiplos por dia")
+            else:
+                st.caption("🟢 Menos de 1 a cada 10h")
+        
+        with col3:
+            st.metric(
+                "📆 Média por Semana", 
+                f"{avg_per_week:.2f}",
+                help=f"{total} incidentes em {period_weeks:.1f} semanas"
+            )
+            if avg_per_week >= 50:
+                st.caption("🔴 Alta frequência semanal")
+            elif avg_per_week >= 15:
+                st.caption("🟡 Frequência semanal moderada")
+            else:
+                st.caption("🟢 Frequência semanal baixa")
+        
+        with col4:
+            st.metric(
+                "📊 Média por Mês", 
+                f"{avg_per_month:.2f}",
+                help=f"{total} incidentes em {period_months:.1f} meses"
+            )
+            if avg_per_month >= 200:
+                st.caption("🔴 Alta frequência mensal")
+            elif avg_per_month >= 60:
+                st.caption("🟡 Frequência mensal moderada")
+            else:
+                st.caption("🟢 Frequência mensal baixa")
+        
+        # Visualização adicional - Gráfico comparativo
+        st.markdown("##### 📈 Comparativo de Frequências (normalizado)")
+        
+        # Normalizar valores para escala 0-100 para comparação visual
+        max_freq = max(avg_per_day * 10, avg_per_hour * 1000, avg_per_week, avg_per_month / 10)
+        if max_freq > 0:
+            norm_day = (avg_per_day * 10 / max_freq) * 100
+            norm_hour = (avg_per_hour * 1000 / max_freq) * 100
+            norm_week = (avg_per_week / max_freq) * 100
+            norm_month = ((avg_per_month / 10) / max_freq) * 100
+        else:
+            norm_day = norm_hour = norm_week = norm_month = 0
+        
+        fig_freq_comp = go.Figure()
+        
+        frequencies = ['Por Dia', 'Por Hora\n(x1000)', 'Por Semana', 'Por Mês\n(÷10)']
+        values = [avg_per_day, avg_per_hour * 1000, avg_per_week, avg_per_month / 10]
+        normalized = [norm_day, norm_hour, norm_week, norm_month]
+        
+        fig_freq_comp.add_trace(go.Bar(
+            x=frequencies,
+            y=values,
+            text=[f"{v:.2f}" for v in values],
+            textposition='outside',
+            marker_color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4'],
+            hovertemplate='<b>%{x}</b><br>Valor: %{text}<br>Intensidade: %{customdata:.1f}%<extra></extra>',
+            customdata=normalized
+        ))
+        
+        fig_freq_comp.update_layout(
+            title="Comparativo de Frequências (valores ajustados para visualização)",
+            yaxis_title="Frequência Ajustada",
+            height=350,
+            showlegend=False
+        )
+        
+        st.plotly_chart(fig_freq_comp, use_container_width=True, key='frequency_comparison')
+        
+        # Interpretação automática
+        st.markdown("##### 💡 Interpretação da Frequência")
+        
+        if avg_per_day >= 10:
+            st.error("🔴 **Alerta de Alta Frequência**: Mais de 10 incidentes por dia em média. Requer atenção imediata e possível automação.")
+        elif avg_per_day >= 3:
+            st.warning("🟡 **Frequência Moderada**: Entre 3-10 incidentes por dia. Considere análise de causa raiz e otimização.")
+        else:
+            st.success("🟢 **Frequência Baixa**: Menos de 3 incidentes por dia. Monitoramento regular é suficiente.")
+        
+        # Estatísticas adicionais por período
+        with st.expander("📊 Ver Distribuição Detalhada por Períodos"):
+            # Por dia
+            daily_counts = self.df.groupby('date').size()
+            st.write("**📅 Estatísticas Diárias:**")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Dia com Mais Alertas", daily_counts.max())
+            col2.metric("Dia com Menos Alertas", daily_counts.min())
+            col3.metric("Desvio Padrão", f"{daily_counts.std():.2f}")
+            
+            # Por hora do dia
+            hourly_counts = self.df.groupby('hour').size()
+            st.write("**🕐 Estatísticas por Hora do Dia:**")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Hora Mais Ativa", f"{hourly_counts.idxmax()}:00")
+            col2.metric("Máx. Alertas em 1 Hora", hourly_counts.max())
+            col3.metric("Média por Hora Ativa", f"{hourly_counts.mean():.2f}")
+        
+        st.markdown("---")
+        
         intervals = self.df['time_diff_hours'].dropna()
         if len(intervals) > 0:
             st.subheader("⏱️ Intervalos Entre Alertas")
@@ -2745,7 +2883,7 @@ class StreamlitAlertAnalyzer:
                 st.metric("Mínimo (h)", f"{intervals.min():.2f}")
             with col4:
                 st.metric("Máximo (h)", f"{intervals.max():.2f}")
-
+                
     def show_individual_alert_analysis(self):
         st.header(f"📌 Análise Individual do Alert ID: {self.alert_id}")
 
