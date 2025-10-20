@@ -27,10 +27,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ============================================================
-# CLASSE DE ANÁLISE AVANÇADA DE RECORRÊNCIA - VERSÃO COMPLETA
-# ============================================================
-
 class AdvancedRecurrenceAnalyzer:
     """Analisador avançado de padrões de reincidência com todas as análises integradas"""
     
