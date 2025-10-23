@@ -1600,7 +1600,7 @@ def classify_alert_pattern(alert_data, max_gap_hours=24, min_group_size=3,
 def process_single_alert(alert_id, df_original, max_gap_hours=24, min_group_size=3, 
                         spike_threshold_multiplier=5):
     try:
-        df_alert = df_original[df_original['u_alert_id'] == alert_id].copy()
+        df_alert = df_original[df_original['short_ci'] == alert_id].copy()
         if len(df_alert) < 1:
             return None
         
@@ -1679,21 +1679,21 @@ class StreamlitAlertAnalyzer:
                 st.write(f"**Colunas:** {list(df_raw.columns)}")
                 st.write(f"**Shape:** {df_raw.shape}")
                 st.dataframe(df_raw.head())
-            if 'created_on' not in df_raw.columns or 'u_alert_id' not in df_raw.columns:
-                st.error("❌ Colunas 'created_on' e 'u_alert_id' são obrigatórias!")
+            if 'created_on' not in df_raw.columns or 'short_ci' not in df_raw.columns:
+                st.error("❌ Colunas 'created_on' e 'short_ci' são obrigatórias!")
                 return False
             df_raw['created_on'] = pd.to_datetime(df_raw['created_on'])
             df_raw = df_raw.dropna(subset=['created_on'])
-            df_raw = df_raw.sort_values(['u_alert_id', 'created_on']).reset_index(drop=True)
+            df_raw = df_raw.sort_values(['short_ci', 'created_on']).reset_index(drop=True)
             self.df_original = df_raw
-            st.sidebar.write(f"**IDs disponíveis:** {len(df_raw['u_alert_id'].unique())}")
+            st.sidebar.write(f"**IDs disponíveis:** {len(df_raw['short_ci'].unique())}")
             return True
         except Exception as e:
             st.error(f"❌ Erro ao carregar dados: {e}")
             return False
 
     def prepare_individual_analysis(self, alert_id):
-        df_filtered = self.df_original[self.df_original['u_alert_id'] == alert_id].copy()
+        df_filtered = self.df_original[self.df_original['short_ci'] == alert_id].copy()
         if len(df_filtered) == 0:
             return False
 
@@ -1725,7 +1725,7 @@ class StreamlitAlertAnalyzer:
         self.min_group_size = min_group_size
         self.spike_threshold_multiplier = spike_threshold_multiplier
         
-        unique_ids = self.df_original['u_alert_id'].unique()
+        unique_ids = self.df_original['short_ci'].unique()
         total_ids = len(unique_ids)
         st.info(f"📊 Processando {total_ids} Alert IDs...")
         alert_metrics = []
@@ -2087,7 +2087,7 @@ class StreamlitAlertAnalyzer:
                 with col5:
                     st.metric("Dias Únicos", alert_info['unique_days'])
                 
-                alert_data = self.df_original[self.df_original['u_alert_id'] == alert_id].copy()
+                alert_data = self.df_original[self.df_original['short_ci'] == alert_id].copy()
                 alert_data, groups_info = identify_alert_groups(
                     alert_data,
                     self.max_gap_hours,
@@ -2222,7 +2222,7 @@ class StreamlitAlertAnalyzer:
         
         all_groups_data = []
         for _, alert in df_continuous.iterrows():
-            alert_data = self.df_original[self.df_original['u_alert_id'] == alert['alert_id']].copy()
+            alert_data = self.df_original[self.df_original['short_ci'] == alert['alert_id']].copy()
             _, groups_info = identify_alert_groups(
                 alert_data,
                 self.max_gap_hours,
@@ -2284,7 +2284,7 @@ class StreamlitAlertAnalyzer:
         st.info(f"📊 Analisando padrões de recorrência de **{len(df_continuous)}** alertas contínuos")
 
         continuous_alert_ids = df_continuous['alert_id'].unique()
-        df_continuous_details = self.df_original[self.df_original['u_alert_id'].isin(continuous_alert_ids)].copy()
+        df_continuous_details = self.df_original[self.df_original['short_ci'].isin(continuous_alert_ids)].copy()
 
         df_continuous_details['hour'] = df_continuous_details['created_on'].dt.hour
         df_continuous_details['day_of_week'] = df_continuous_details['created_on'].dt.dayofweek
