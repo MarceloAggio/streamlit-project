@@ -3100,7 +3100,7 @@ def main():
                         id_options,
                         help="Escolha o ID do alerta para análise (ordenado por frequência)"
                     )
-                    selected_id = selected_option.split(" ")[0]
+                    selected_id = selected_option.split(" (")[0]  # Pega tudo ANTES de " ("
 
                     if st.sidebar.button("🚀 Executar Análise Individual", type="primary"):
                         analyzer.max_gap_hours = max_gap_hours
