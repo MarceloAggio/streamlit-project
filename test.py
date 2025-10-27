@@ -3080,6 +3080,144 @@ class StreamlitAlertAnalyzer:
             st.error(f"Erro na análise em lote: {e}")
             return None
 
+    def complete_analysis_all_short_ci(self, progress_bar=None):
+        """
+        Análise COMPLETA de todos os short_ci combinando análise global + reincidência
+        Retorna DataFrame consolidado com TODAS as métricas
+        """
+        try:
+            # 1. Executar análise global (isolados vs contínuos)
+            if progress_bar:
+                progress_bar.progress(0.1, text="Executando análise global...")
+            
+            alert_ids = self.df_original['short_ci'].unique()
+            results_global = []
+            
+            for alert_id in alert_ids:
+                metrics = process_single_alert(
+                    alert_id, 
+                    self.df_original, 
+                    self.max_gap_hours, 
+                    self.min_group_size, 
+                    self.spike_threshold_multiplier
+                )
+                if metrics:
+                    results_global.append(metrics)
+            
+            df_global = pd.DataFrame(results_global)
+            
+            # 2. Executar análise de reincidência
+            if progress_bar:
+                progress_bar.progress(0.3, text="Executando análise de reincidência...")
+            
+            all_results = []
+            total = len(alert_ids)
+            
+            for idx, short_ci in enumerate(alert_ids):
+                if progress_bar:
+                    progress = 0.3 + (0.6 * (idx + 1) / total)
+                    progress_bar.progress(progress, text=f"Analisando reincidência {idx + 1}/{total}: {short_ci}")
+                
+                df_ci = self.df_original[self.df_original['short_ci'] == short_ci].copy()
+                df_ci['created_on'] = pd.to_datetime(df_ci['created_on'], errors='coerce')
+                df_ci = df_ci.dropna(subset=['created_on'])
+                df_ci = df_ci.sort_values('created_on')
+                
+                if len(df_ci) < 3:
+                    all_results.append({
+                        'short_ci': short_ci,
+                        'reincidencia_score': 0,
+                        'reincidencia_status': '⚪ DADOS INSUFICIENTES',
+                        'total_occurrences_reincidencia': len(df_ci),
+                        'mean_interval_hours_reincidencia': None,
+                        'cv_reincidencia': None,
+                        'regularity_score': 0,
+                        'periodicity_detected': False,
+                        'predictability_score': 0
+                    })
+                    continue
+                
+                analyzer = AdvancedRecurrenceAnalyzer(df_ci, short_ci)
+                result = analyzer.analyze_silent()
+                
+                if result:
+                    all_results.append({
+                        'short_ci': short_ci,
+                        'reincidencia_score': result['score'],
+                        'reincidencia_status': result['classification'],
+                        'total_occurrences_reincidencia': result['total_occurrences'],
+                        'mean_interval_hours_reincidencia': result['mean_interval_hours'],
+                        'cv_reincidencia': result['cv'],
+                        'regularity_score': result['regularity_score'],
+                        'periodicity_detected': result['periodicity_detected'],
+                        'predictability_score': result['predictability_score']
+                    })
+                else:
+                    all_results.append({
+                        'short_ci': short_ci,
+                        'reincidencia_score': 0,
+                        'reincidencia_status': '⚪ ERRO NA ANÁLISE',
+                        'total_occurrences_reincidencia': len(df_ci),
+                        'mean_interval_hours_reincidencia': None,
+                        'cv_reincidencia': None,
+                        'regularity_score': 0,
+                        'periodicity_detected': False,
+                        'predictability_score': 0
+                    })
+            
+            df_reincidencia = pd.DataFrame(all_results)
+            
+            # 3. Merge dos dois DataFrames
+            if progress_bar:
+                progress_bar.progress(0.95, text="Consolidando resultados...")
+            
+            # Renomear colunas do df_global para evitar conflitos
+            df_global = df_global.rename(columns={'alert_id': 'short_ci'})
+            
+            # Fazer merge
+            df_consolidated = pd.merge(
+                df_global,
+                df_reincidencia,
+                on='short_ci',
+                how='outer'
+            )
+            
+            # Reordenar colunas para priorizar as mais importantes
+            priority_columns = [
+                'short_ci',
+                'reincidencia_score',
+                'reincidencia_status',
+                'pattern_type',
+                'total_ocorrencias',
+                'num_grupos',
+                'alertas_isolados',
+                'alertas_agrupados',
+                'pct_isolados'
+            ]
+            
+            # Adicionar colunas restantes
+            other_columns = [col for col in df_consolidated.columns if col not in priority_columns]
+            final_columns = priority_columns + other_columns
+            
+            # Reordenar apenas colunas que existem
+            final_columns = [col for col in final_columns if col in df_consolidated.columns]
+            df_consolidated = df_consolidated[final_columns]
+            
+            # Ordenar por score de reincidência decrescente
+            df_consolidated = df_consolidated.sort_values('reincidencia_score', ascending=False)
+            
+            if progress_bar:
+                progress_bar.progress(1.0, text="Análise completa!")
+            
+            return df_consolidated
+        
+        except Exception as e:
+            st.error(f"Erro na análise completa: {e}")
+            import traceback
+            st.error(traceback.format_exc())
+            return None
+
+
     def show_individual_alert_analysis(self):
         st.header(f"📌 Análise Individual do Alert ID: {self.alert_id}")
 
@@ -3277,7 +3415,7 @@ def main():
     
     analysis_mode = st.sidebar.selectbox(
         "🎯 Modo de Análise",
-        ["🌍 Análise Global", "🔍 Análise Individual"],
+        ["🌍 Análise Global", "🔍 Análise Individual", "🔄 Análise de Reincidência Global (TODOS)", "📊 Análise Completa + CSV Consolidado"],
         help="Escolha entre analisar todos os alertas ou um alerta específico"
     )
     
@@ -3443,6 +3581,261 @@ def main():
                         else:
                             st.error("❌ Não foi possível processar os dados para análise global")
             
+
+            elif analysis_mode == "📊 Análise Completa + CSV Consolidado":
+                # ANÁLISE COMPLETA: Global + Reincidência em um único CSV
+                st.subheader("📊 Análise Completa de Todos os Alertas")
+                st.markdown("""
+                Esta análise executará:
+                1. **Análise Global**: Isolados vs Contínuos, grupos, métricas temporais
+                2. **Análise de Reincidência**: 16 análises essenciais com score e classificação
+                3. **CSV Consolidado**: Todas as métricas em um único arquivo
+                """)
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("📊 Métricas Globais", "20+")
+                with col2:
+                    st.metric("🔄 Métricas Reincidência", "12+")
+                with col3:
+                    st.metric("📋 Total de Colunas", "32+")
+                
+                if st.sidebar.button("🚀 Executar Análise Completa", type="primary", key="complete_analysis"):
+                    if analyzer.prepare_global_analysis():
+                        st.info(f"📊 Iniciando análise completa de {analyzer.df['short_ci'].nunique()} Short CIs...")
+                        st.warning("⏱️ Esta análise pode levar alguns minutos dependendo da quantidade de dados...")
+                        
+                        # Barra de progresso
+                        progress_bar = st.progress(0, text="Iniciando análise completa...")
+                        
+                        # Executar análise completa
+                        df_consolidated = analyzer.complete_analysis_all_short_ci(progress_bar)
+                        
+                        progress_bar.empty()
+                        
+                        if df_consolidated is not None and len(df_consolidated) > 0:
+                            st.success(f"✅ Análise completa concluída! {len(df_consolidated)} Short CIs analisados")
+                            
+                            # Armazenar resultados
+                            analyzer.df_all_alerts = df_consolidated
+                            
+                            # ===============================================
+                            # RESUMO EXECUTIVO
+                            # ===============================================
+                            st.header("📊 Resumo Executivo")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            # Contadores de reincidência
+                            critical = len(df_consolidated[df_consolidated['reincidencia_status'].str.contains('CRÍTICO', na=False)])
+                            high = len(df_consolidated[df_consolidated['reincidencia_status'].str.contains('PARCIALMENTE', na=False)])
+                            medium = len(df_consolidated[df_consolidated['reincidencia_status'].str.contains('DETECTÁVEL', na=False)])
+                            low = len(df_consolidated[df_consolidated['reincidencia_status'].str.contains('NÃO REINCIDENTE', na=False)])
+                            
+                            col1.metric("🔴 Críticos (P1)", critical, help="Score 70-100")
+                            col2.metric("🟠 Altos (P2)", high, help="Score 50-69")
+                            col3.metric("🟡 Médios (P3)", medium, help="Score 30-49")
+                            col4.metric("🟢 Baixos (P4)", low, help="Score 0-29")
+                            
+                            st.markdown("---")
+                            
+                            # Estatísticas de padrões
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            continuous_count = len(df_consolidated[df_consolidated['pattern_type'] == 'continuous'])
+                            isolated_count = len(df_consolidated[df_consolidated['pattern_type'] == 'isolated'])
+                            total_alerts = df_consolidated['total_ocorrencias'].sum()
+                            avg_freq = df_consolidated['freq_dia'].mean()
+                            
+                            col1.metric("🟢 Contínuos", continuous_count)
+                            col2.metric("🔴 Isolados", isolated_count)
+                            col3.metric("📊 Total Alertas", f"{total_alerts:,.0f}")
+                            col4.metric("📈 Freq. Média/Dia", f"{avg_freq:.2f}")
+                            
+                            # ===============================================
+                            # VISUALIZAÇÕES
+                            # ===============================================
+                            st.markdown("---")
+                            st.subheader("📈 Visualizações")
+                            
+                            tab1, tab2, tab3 = st.tabs(["🎯 Reincidência", "📊 Padrões", "🔥 Top Alertas"])
+                            
+                            with tab1:
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    # Gráfico de pizza - Status de Reincidência
+                                    status_counts = df_consolidated['reincidencia_status'].value_counts()
+                                    fig = px.pie(
+                                        values=status_counts.values,
+                                        names=status_counts.index,
+                                        title="Distribuição de Status de Reincidência",
+                                        color_discrete_sequence=['red', 'orange', 'yellow', 'green', 'lightgray']
+                                    )
+                                    st.plotly_chart(fig, use_container_width=True)
+                                
+                                with col2:
+                                    # Histograma de scores
+                                    fig = px.histogram(
+                                        df_consolidated,
+                                        x='reincidencia_score',
+                                        nbins=20,
+                                        title="Distribuição de Scores de Reincidência",
+                                        labels={'reincidencia_score': 'Score', 'count': 'Quantidade'}
+                                    )
+                                    fig.add_vline(x=70, line_dash="dash", line_color="red", annotation_text="P1")
+                                    fig.add_vline(x=50, line_dash="dash", line_color="orange", annotation_text="P2")
+                                    fig.add_vline(x=30, line_dash="dash", line_color="yellow", annotation_text="P3")
+                                    st.plotly_chart(fig, use_container_width=True)
+                            
+                            with tab2:
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    # Distribuição de padrões
+                                    pattern_counts = df_consolidated['pattern_type'].value_counts()
+                                    fig = px.bar(
+                                        x=pattern_counts.index,
+                                        y=pattern_counts.values,
+                                        title="Isolados vs Contínuos",
+                                        labels={'x': 'Tipo de Padrão', 'y': 'Quantidade'},
+                                        color=pattern_counts.values,
+                                        color_continuous_scale='RdYlGn'
+                                    )
+                                    st.plotly_chart(fig, use_container_width=True)
+                                
+                                with col2:
+                                    # Scatter: Score vs Frequência
+                                    fig = px.scatter(
+                                        df_consolidated,
+                                        x='freq_dia',
+                                        y='reincidencia_score',
+                                        color='pattern_type',
+                                        size='total_ocorrencias',
+                                        hover_data=['short_ci'],
+                                        title="Score de Reincidência vs Frequência Diária",
+                                        labels={'freq_dia': 'Frequência/Dia', 'reincidencia_score': 'Score'}
+                                    )
+                                    st.plotly_chart(fig, use_container_width=True)
+                            
+                            with tab3:
+                                # Top 20 alertas críticos
+                                st.markdown("### 🔴 Top 20 Alertas Mais Críticos")
+                                top_critical = df_consolidated.nlargest(20, 'reincidencia_score')[[
+                                    'short_ci', 'reincidencia_score', 'reincidencia_status', 
+                                    'pattern_type', 'total_ocorrencias', 'freq_dia', 
+                                    'regularity_score', 'predictability_score'
+                                ]].round(2)
+                                st.dataframe(top_critical, use_container_width=True)
+                                
+                                # Top 10 mais frequentes
+                                st.markdown("### 🔥 Top 10 Alertas Mais Frequentes")
+                                top_freq = df_consolidated.nlargest(10, 'freq_dia')[[
+                                    'short_ci', 'freq_dia', 'total_ocorrencias', 
+                                    'reincidencia_score', 'reincidencia_status', 'pattern_type'
+                                ]].round(2)
+                                st.dataframe(top_freq, use_container_width=True)
+                            
+                            # ===============================================
+                            # TABELA COMPLETA
+                            # ===============================================
+                            st.markdown("---")
+                            st.subheader("📋 Dados Completos")
+                            
+                            with st.expander("🔍 Ver Tabela Completa de Resultados", expanded=False):
+                                # Mostrar primeiras colunas importantes
+                                display_columns = [
+                                    'short_ci', 'reincidencia_score', 'reincidencia_status',
+                                    'pattern_type', 'total_ocorrencias', 'num_grupos',
+                                    'alertas_isolados', 'alertas_agrupados', 'freq_dia',
+                                    'intervalo_medio_h', 'regularity_score', 'predictability_score'
+                                ]
+                                display_columns = [col for col in display_columns if col in df_consolidated.columns]
+                                
+                                st.dataframe(
+                                    df_consolidated[display_columns].sort_values('reincidencia_score', ascending=False),
+                                    use_container_width=True
+                                )
+                            
+                            # ===============================================
+                            # ESTATÍSTICAS DETALHADAS
+                            # ===============================================
+                            with st.expander("📊 Estatísticas Detalhadas", expanded=False):
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.markdown("#### 🎯 Métricas de Reincidência")
+                                    st.write(f"**Score Médio:** {df_consolidated['reincidencia_score'].mean():.2f}")
+                                    st.write(f"**Score Mediano:** {df_consolidated['reincidencia_score'].median():.2f}")
+                                    st.write(f"**Desvio Padrão:** {df_consolidated['reincidencia_score'].std():.2f}")
+                                    st.write(f"**Score Máximo:** {df_consolidated['reincidencia_score'].max():.2f}")
+                                    st.write(f"**Score Mínimo:** {df_consolidated['reincidencia_score'].min():.2f}")
+                                
+                                with col2:
+                                    st.markdown("#### 📈 Métricas de Frequência")
+                                    st.write(f"**Freq. Média/Dia:** {df_consolidated['freq_dia'].mean():.2f}")
+                                    st.write(f"**Freq. Mediana/Dia:** {df_consolidated['freq_dia'].median():.2f}")
+                                    st.write(f"**Total de Grupos:** {df_consolidated['num_grupos'].sum():.0f}")
+                                    st.write(f"**% Alertas Contínuos:** {continuous_count/len(df_consolidated)*100:.1f}%")
+                                    st.write(f"**% Alertas Isolados:** {isolated_count/len(df_consolidated)*100:.1f}%")
+                            
+                            # ===============================================
+                            # DOWNLOAD
+                            # ===============================================
+                            st.markdown("---")
+                            st.subheader("📥 Exportar Resultados")
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.markdown("### 📊 CSV Completo")
+                                st.info("Contém TODAS as métricas: global + reincidência")
+                                csv_buffer = io.StringIO()
+                                df_consolidated.to_csv(csv_buffer, index=False)
+                                st.download_button(
+                                    label="⬇️ Baixar Análise Completa (CSV)",
+                                    data=csv_buffer.getvalue(),
+                                    file_name=f"analise_completa_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv",
+                                    use_container_width=True
+                                )
+                                st.caption(f"✅ {len(df_consolidated.columns)} colunas | {len(df_consolidated)} linhas")
+                            
+                            with col2:
+                                st.markdown("### 🎯 CSV Resumido")
+                                st.info("Apenas: short_ci, score e status")
+                                summary_df = df_consolidated[['short_ci', 'reincidencia_score', 'reincidencia_status']].copy()
+                                summary_df.columns = ['short_ci', 'score', 'status']
+                                csv_summary = io.StringIO()
+                                summary_df.to_csv(csv_summary, index=False)
+                                st.download_button(
+                                    label="⬇️ Baixar Resumo (CSV)",
+                                    data=csv_summary.getvalue(),
+                                    file_name=f"resumo_reincidencia_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                    mime="text/csv",
+                                    use_container_width=True
+                                )
+                                st.caption(f"✅ 3 colunas essenciais | {len(summary_df)} linhas")
+                            
+                            # Também adicionar na sidebar
+                            st.sidebar.markdown("---")
+                            st.sidebar.subheader("📥 Downloads Rápidos")
+                            st.sidebar.download_button(
+                                label="📊 CSV Completo",
+                                data=csv_buffer.getvalue(),
+                                file_name=f"analise_completa_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                mime="text/csv"
+                            )
+                            st.sidebar.download_button(
+                                label="🎯 CSV Resumido",
+                                data=csv_summary.getvalue(),
+                                file_name=f"resumo_reincidencia_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                mime="text/csv"
+                            )
+                        else:
+                            st.error("❌ Não foi possível processar a análise completa")
+            
+
             else:  # Análise Individual
                 try:
                     id_counts = analyzer.df_original['short_ci'].value_counts()
