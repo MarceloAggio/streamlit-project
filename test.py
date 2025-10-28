@@ -1901,6 +1901,10 @@ class StreamlitAlertAnalyzer:
     def prepare_global_analysis(self, use_multiprocessing=True, max_gap_hours=24, 
                                min_group_size=3, spike_threshold_multiplier=5):
         st.header("🌍 Análise Global de Todos os Alertas")
+        
+        # Definir self.df para uso posterior
+        self.df = self.df_original.copy()
+        
         self.max_gap_hours = max_gap_hours
         self.min_group_size = min_group_size
         self.spike_threshold_multiplier = spike_threshold_multiplier
@@ -3018,6 +3022,11 @@ class StreamlitAlertAnalyzer:
         NOVA FUNCIONALIDADE: Análise de reincidência em lote para TODOS os short_ci
         """
         try:
+            # Verificar se df_original existe
+            if self.df_original is None or len(self.df_original) == 0:
+                st.error("❌ Dados não carregados. Por favor, faça upload de um arquivo primeiro.")
+                return None
+            
             all_results = []
             short_ci_list = self.df_original['short_ci'].unique()
             total = len(short_ci_list)
@@ -3086,6 +3095,11 @@ class StreamlitAlertAnalyzer:
         Retorna DataFrame consolidado com TODAS as métricas
         """
         try:
+            # Verificar se df_original existe
+            if self.df_original is None or len(self.df_original) == 0:
+                st.error("❌ Dados não carregados. Por favor, faça upload de um arquivo primeiro.")
+                return None
+            
             # 1. Executar análise global (isolados vs contínuos)
             if progress_bar:
                 progress_bar.progress(0.1, text="Executando análise global...")
@@ -3488,7 +3502,8 @@ def main():
                 
                 if st.sidebar.button("🚀 Executar Análise Global de Reincidência", type="primary"):
                     if analyzer.prepare_global_analysis():
-                        st.info(f"📊 Iniciando análise de {analyzer.df['short_ci'].nunique()} Short CIs...")
+                        num_short_ci = analyzer.df['short_ci'].nunique() if analyzer.df is not None else 0
+                        st.info(f"📊 Iniciando análise de {num_short_ci} Short CIs...")
                         
                         # Barra de progresso
                         progress_bar = st.progress(0, text="Iniciando análise...")
@@ -3602,7 +3617,8 @@ def main():
                 
                 if st.sidebar.button("🚀 Executar Análise Completa", type="primary", key="complete_analysis"):
                     if analyzer.prepare_global_analysis():
-                        st.info(f"📊 Iniciando análise completa de {analyzer.df['short_ci'].nunique()} Short CIs...")
+                        num_short_ci = analyzer.df['short_ci'].nunique() if analyzer.df is not None else 0
+                        st.info(f"📊 Iniciando análise completa de {num_short_ci} Short CIs...")
                         st.warning("⏱️ Esta análise pode levar alguns minutos dependendo da quantidade de dados...")
                         
                         # Barra de progresso
@@ -3989,4 +4005,4 @@ def main():
             """)
 
 if __name__ == "__main__":
-    main()
+    main() 
