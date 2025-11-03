@@ -5,3 +5,599 @@ plotly==5.17.0
 scipy==1.11.2
 scikit-learn==1.3.0
 holidays==0.32
+"""
+Aplicação principal Streamlit para análise de séries temporais
+"""
+import streamlit as st
+import pandas as pd
+import numpy as np
+import os
+from datetime import datetime, timedelta
+import warnings
+
+# Imports locais
+from config.config import (
+    DATADOG_URL, DATADOG_HEADERS, PAGE_CONFIG, 
+    DEFAULT_THRESHOLD_STD, DEFAULT_DAYS_BACK, 
+    DEFAULT_OUTPUT_FOLDER, EMOJI_MAP
+)
+from servicos.datadog_fetcher import DatadogFetcher
+from servicos.time_series_analyzer import TimeSeriesAnalyzer
+from servicos.clustering_analyzer import ClusteringAnalyzer
+
+warnings.filterwarnings('ignore')
+
+# Configuração da página
+st.set_page_config(**PAGE_CONFIG)
+
+
+def list_subfolders(folder):
+    """Lista subpastas de um diretório"""
+    if os.path.exists(folder):
+        return [f.name for f in os.scandir(folder) if f.is_dir()]
+    return []
+
+
+def navigate_folders(base_folder, tab_key):
+    """
+    Permite navegação hierárquica por subpastas
+    Retorna o caminho da pasta selecionada
+    """
+    current_folder = base_folder
+    
+    if not os.path.exists(base_folder):
+        st.error(f"A pasta base '{base_folder}' não foi encontrada")
+        return None
+    
+    # Nível 1
+    level1_folders = list_subfolders(base_folder)
+    if level1_folders:
+        selected_level1 = st.selectbox(
+            "Escolha a categoria principal:", 
+            level1_folders, 
+            key=f"level1_{tab_key}"
+        )
+        current_folder = os.path.join(base_folder, selected_level1)
+
+        # Nível 2
+        level2_folders = list_subfolders(current_folder)
+        if level2_folders:
+            selected_level2 = st.selectbox(
+                f"Escolha a subpasta dentro de '{selected_level1}':", 
+                level2_folders, 
+                key=f"level2_{tab_key}"
+            )
+            current_folder = os.path.join(current_folder, selected_level2)
+
+            # Nível 3
+            level3_folders = list_subfolders(current_folder)
+            if level3_folders:
+                selected_level3 = st.selectbox(
+                    f"Escolha a subpasta dentro de '{selected_level2}':", 
+                    level3_folders, 
+                    key=f"level3_{tab_key}"
+                )
+                current_folder = os.path.join(current_folder, selected_level3)
+
+    st.info(f"📁 Pasta selecionada: `{current_folder}`")
+    return current_folder
+
+
+def tab_collect_datadog():
+    """Aba de coleta de dados do Datadog"""
+    st.header("Coleta de Dados do Datadog")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        output_folder = st.text_input("Pasta de Saída", value=DEFAULT_OUTPUT_FOLDER)
+    with col2:
+        days_back = st.number_input(
+            "Dias Retroativos", 
+            min_value=1, 
+            max_value=365, 
+            value=DEFAULT_DAYS_BACK
+        )
+    
+    query = st.text_area(
+        "Query do Datadog",
+        height=100,
+        placeholder="avg:aws.apigateway.latency{*} by {apiname}"
+    )
+
+    if st.button("🚀 Iniciar Coleta"):
+        if query.strip():
+            end_time = int(datetime.now().timestamp())
+            start_time = int((datetime.now() - timedelta(days=days_back)).timestamp())
+
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # Calcular número de intervalos
+            num_intervals = (end_time - start_time) // 86400 + 1
+            status_text.text(f"Iniciando coleta de {num_intervals} intervalos diários...")
+            
+            # Criar fetcher e coletar dados
+            fetcher = DatadogFetcher(DATADOG_URL, DATADOG_HEADERS)
+            
+            # Simular progresso (o método collect_data_parallel gerencia internamente)
+            for i in range(num_intervals):
+                progress_bar.progress((i + 1) / num_intervals)
+            
+            success, message, _ = fetcher.collect_data_parallel(
+                query.strip(), 
+                start_time, 
+                end_time, 
+                output_folder
+            )
+            
+            progress_bar.empty()
+            status_text.empty()
+            
+            if success:
+                st.success(message)
+            else:
+                st.error(message)
+        else:
+            st.warning("Por favor, insira uma query válida.")
+
+
+def display_analysis_results(analyzer, basic_stats, freq_desc, seasonality_results, 
+                            jump_count, plots, selected_file, anomaly_info):
+    """Exibe os resultados da análise"""
+    st.success("✅ Análise concluída!")
+    
+    # Estatísticas básicas
+    st.subheader("📊 Estatísticas Básicas")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Média", f"{basic_stats['Média']:.4f}")
+    col2.metric("Desvio Padrão", f"{basic_stats['Desvio Padrão']:.4f}")
+    col3.metric("Frequência", freq_desc)
+    
+    # Sazonalidade
+    st.subheader("🔬 Sazonalidade")
+    classification = seasonality_results['classification']
+    season_type = seasonality_results['season_type']
+    st.info(f"**Classificação:** {classification} | **Tipo:** {season_type}")
+    
+    col1, col2, col3 = st.columns(3)
+    hourly_test = seasonality_results.get('hourly_test', {})
+    daily_test = seasonality_results.get('daily_test', {})
+    weekly_test = seasonality_results.get('weekly_test', {})
+    
+    with col1:
+        st.markdown("**Sazonalidade Horária**")
+        if hourly_test.get('has_pattern', False):
+            st.success(f"Detectado: {hourly_test.get('variance_explained', 0):.1f}%")
+        else:
+            st.info("Não detectado")
+    
+    with col2:
+        st.markdown("**Sazonalidade Diaria**")
+        if daily_test.get('has_pattern', False):
+            st.success(f"Detectado: {daily_test.get('variance_explained', 0):.1f}%")
+        else:
+            st.info("Não detectado")
+    
+    with col3:
+        st.markdown("**Sazonalidade Semanal**")
+        if weekly_test.get('has_pattern', False):
+            st.success(f"Detectado: {weekly_test.get('variance_explained', 0):.1f}%")
+        else:
+            st.info("Não detectado")
+    
+    # Algoritmo de Detecção de Anomalias Recomendado
+    st.subheader("🎯 Algoritmo de Detecção de Anomalias Recomendado")
+    algorithm = anomaly_info.get('algorithm', 'N/A')
+    reason = anomaly_info.get('reason', 'N/A')
+    characteristics = anomaly_info.get('characteristics', 'N/A')
+    
+    # Definir cor baseado no algoritmo
+    algorithm_colors = {
+        'BASIC': 'blue',
+        'ROBUST': 'green',
+        'AGILE': 'orange'
+    }
+    algorithm_emojis = {
+        'BASIC': '🔵',
+        'ROBUST': '🟢',
+        'AGILE': '🟠'
+    }
+    
+    color = algorithm_colors.get(algorithm, 'gray')
+    emoji = algorithm_emojis.get(algorithm, '⚪')
+    
+    st.markdown(f"### {emoji} **{algorithm}**")
+    st.info(f"**Recomendação:** {reason}")
+    st.caption(f"📌 {characteristics}")
+    
+    # Exibir métricas técnicas em expander
+    with st.expander("📊 Ver Métricas Técnicas da Decisão"):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(
+                "Variância da Tendência",
+                f"{anomaly_info.get('trend_variance_pct', 0):.2f}%",
+                help="Quanto a tendência contribui para a variância total. Valores baixos (<15%) indicam estabilidade."
+            )
+        with col2:
+            st.metric(
+                "Coeficiente de Variação",
+                f"{anomaly_info.get('trend_coefficient_variation', 0):.4f}",
+                help="Volatilidade relativa da tendência. Valores baixos (<0.1) indicam tendência estável."
+            )
+        
+        stability_status = "✅ **ESTÁVEL**" if anomaly_info.get('is_stable', False) else "⚠️ **INSTÁVEL**"
+        st.markdown(f"**Status da Série:** {stability_status}")
+    
+    # Visualizações
+    st.subheader("📈 Visualizações")
+    st.plotly_chart(plots['original'], use_container_width=True)
+    st.plotly_chart(plots['distribution'], use_container_width=True)
+    
+    if 'decomposition' in plots:
+        st.plotly_chart(plots['decomposition'], use_container_width=True)
+    
+    if 'patterns' in plots:
+        st.plotly_chart(plots['patterns'], use_container_width=True)
+    
+    st.plotly_chart(plots['jumps'], use_container_width=True)
+    
+    if jump_count > 0:
+        st.warning(f"Foram detectados {jump_count} saltos significativos")
+    
+    # Download dos resultados
+    results_summary = {
+        'arquivo': selected_file,
+        'classificacao': classification,
+        'tipo_sazonalidade': season_type,
+        'algoritmo_anomalia': anomaly_info.get('algorithm', 'N/A'),
+        'razao_algoritmo': anomaly_info.get('reason', 'N/A'),
+        'variancia_tendencia_pct': anomaly_info.get('trend_variance_pct', 0),
+        'coef_variacao_tendencia': anomaly_info.get('trend_coefficient_variation', 0),
+        'serie_estavel': anomaly_info.get('is_stable', False),
+        'variancia_sazonal_horaria': hourly_test.get('variance_explained', 0),
+        'variancia_sazonal_diaria': daily_test.get('variance_explained', 0),
+        'variancia_sazonal_semanal': weekly_test.get('variance_explained', 0),
+        'frequencia': freq_desc,
+        'saltos_detectados': jump_count,
+        'media': basic_stats['Média'],
+        'desvio_padrao': basic_stats['Desvio Padrão'],
+    }
+    
+    results_df = pd.DataFrame([results_summary])
+    csv_results = results_df.to_csv(index=False)
+    
+    st.download_button(
+        label="💾 Download Resumo da Análise (CSV)",
+        data=csv_results,
+        file_name=f"analise_{selected_file.replace('.csv', '')}_resumo.csv",
+        mime="text/csv"
+    )
+
+
+def tab_analyze_time_series():
+    """Aba de análise individual de séries temporais"""
+    st.header("Análise de Séries Temporais")
+    
+    series_folder = navigate_folders(DEFAULT_OUTPUT_FOLDER, "tab2")
+    
+    if series_folder and os.path.exists(series_folder):
+        csv_files = [f for f in os.listdir(series_folder) if f.endswith('.csv')]
+        
+        if csv_files:
+            st.info(f"Encontrados {len(csv_files)} arquivos CSV na pasta")
+            selected_file = st.selectbox(
+                "Escolha uma série temporal:", 
+                csv_files, 
+                key="selected_file_tab2"
+            )
+            file_path = os.path.join(series_folder, selected_file)
+            
+            threshold_std = st.slider(
+                "Threshold para detecção de saltos (desvios padrão)",
+                min_value=1.0,
+                max_value=5.0,
+                value=DEFAULT_THRESHOLD_STD,
+                step=0.1
+            )
+            
+            if st.button("🔍 Executar Análise", type="primary"):
+                analyzer = TimeSeriesAnalyzer(file_path)
+                
+                if analyzer.load_data():
+                    with st.spinner("Processando análise..."):
+                        basic_stats = analyzer.basic_statistics()
+                        freq_code, freq_desc = analyzer.detect_frequency()
+                        seasonality_results = analyzer.advanced_seasonality_detection()
+                        analyzer.seasonal_decomposition()
+                        algorithm, description, anomaly_info = analyzer.detect_anomaly_algorithm()
+                        jump_count, threshold, jumps = analyzer.detect_jumps(threshold_std)
+                        plots = analyzer.generate_plots()
+                    
+                    display_analysis_results(
+                        analyzer, basic_stats, freq_desc, seasonality_results,
+                        jump_count, plots, selected_file, anomaly_info
+                    )
+        else:
+            st.warning("Nenhum arquivo CSV encontrado na pasta especificada")
+    else:
+        st.error("A pasta especificada não existe")
+
+
+def tab_batch_analysis():
+    """Aba de análise em lote de séries temporais"""
+    st.header("Análise em Lote de Séries Temporais")
+    
+    series_folder = navigate_folders(DEFAULT_OUTPUT_FOLDER, "tab3")
+    
+    # Verificar se há resultados anteriores
+    if 'batch_results' in st.session_state:
+        st.header("📑 Resumo Consolidado (Resultados Anteriores)")
+        st.dataframe(st.session_state['batch_results'], use_container_width=True)
+    
+    if series_folder and os.path.exists(series_folder):
+        csv_files = [f for f in os.listdir(series_folder) if f.endswith('.csv')]
+        
+        if csv_files:
+            st.info(f"Encontrados {len(csv_files)} arquivos CSV na pasta")
+            
+            threshold_std = st.slider(
+                "Threshold para detecção de saltos (desvios padrão)",
+                min_value=1.0,
+                max_value=5.0,
+                value=DEFAULT_THRESHOLD_STD,
+                step=0.1,
+                key="threshold_tab3"
+            )
+            
+            if st.button("🚀 Analisar TODOS os Arquivos", type="primary"):
+                all_results = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for idx, file_name in enumerate(csv_files, start=1):
+                    status_text.text(f"Analisando {file_name} ({idx}/{len(csv_files)})...")
+                    file_path = os.path.join(series_folder, file_name)
+                    
+                    analyzer = TimeSeriesAnalyzer(file_path)
+                    if not analyzer.load_data(show_message=False):
+                        continue
+                    
+                    analyzer.basic_statistics()
+                    analyzer.detect_frequency()
+                    seasonality_results = analyzer.advanced_seasonality_detection()
+                    analyzer.seasonal_decomposition()
+                    algorithm, description, anomaly_info = analyzer.detect_anomaly_algorithm()
+                    analyzer.detect_jumps(threshold_std)
+                    
+                    basic = analyzer.analysis_results.get("basic_stats", {})
+                    jumps = analyzer.analysis_results.get("jumps", {})
+                    hourly_test = seasonality_results.get('hourly_test', {})
+                    daily_test = seasonality_results.get('daily_test', {})
+                    weekly_test = seasonality_results.get('weekly_test', {})
+                    
+                    all_results.append({
+                        "metrica": file_name.replace('.csv', ''),
+                        "classificacao": seasonality_results.get('classification', 'N/A'),
+                        "tipo_sazonalidade": seasonality_results.get('season_type', 'N/A'),
+                        "algoritmo_anomalia": anomaly_info.get('algorithm', 'N/A'),
+                        "variancia_tendencia_pct": anomaly_info.get('trend_variance_pct', 0),
+                        "coef_variacao": anomaly_info.get('trend_coefficient_variation', 0),
+                        "estavel": anomaly_info.get('is_stable', False),
+                        "variancia_sazonal_horaria": hourly_test.get('variance_explained', 0),
+                        "variancia_sazonal_diaria": daily_test.get('variance_explained', 0),
+                        "variancia_sazonal_semanal": weekly_test.get('variance_explained', 0),
+                        "saltos_detectados": jumps.get("count", 0),
+                        "media": basic.get("Média", np.nan),
+                        "desvio_padrao": basic.get("Desvio Padrão", np.nan),
+                    })
+                    
+                    progress_bar.progress(idx / len(csv_files))
+                
+                status_text.text("✅ Análise em lote concluída!")
+                progress_bar.empty()
+
+                results_df = pd.DataFrame(all_results)
+                st.session_state['batch_results'] = results_df
+
+                # Exibir resultados consolidados
+                st.header("📑 Resumo Consolidado")
+                st.dataframe(results_df, use_container_width=True)
+
+                # Resumo de classificação
+                st.subheader("📊 Resumo Geral de Classificação")
+                classification_counts = results_df['classificacao'].value_counts().to_dict()
+                
+                cols = st.columns(len(classification_counts))
+                for idx, (classification, count) in enumerate(classification_counts.items()):
+                    emoji = EMOJI_MAP.get(classification, '❓')
+                    cols[idx].metric(
+                        f"{emoji} {classification.replace('_', ' ')}",
+                        count,
+                        delta=f"{(count/len(csv_files)*100):.1f}%",
+                    )
+                
+                # Resumo de algoritmos de detecção de anomalias
+                st.subheader("🎯 Algoritmos de Detecção de Anomalias Recomendados")
+                algorithm_counts = results_df['algoritmo_anomalia'].value_counts().to_dict()
+                
+                algorithm_emojis_batch = {
+                    'BASIC': '🔵',
+                    'ROBUST': '🟢',
+                    'AGILE': '🟠'
+                }
+                
+                cols_algo = st.columns(len(algorithm_counts))
+                for idx, (algorithm, count) in enumerate(algorithm_counts.items()):
+                    emoji = algorithm_emojis_batch.get(algorithm, '⚪')
+                    cols_algo[idx].metric(
+                        f"{emoji} {algorithm}",
+                        count,
+                        delta=f"{(count/len(csv_files)*100):.1f}%",
+                    )
+
+                # Download consolidado
+                csv_data = results_df.to_csv(index=False)
+                st.download_button(
+                    "💾 Download Consolidado (CSV)",
+                    csv_data,
+                    "analise_consolidada.csv",
+                    "text/csv",
+                )
+                
+                # Análise de Clustering AUTOMÁTICA
+                st.markdown("---")
+                st.header("🔬 Análise de Clustering Automática")
+                
+                with st.spinner("🤖 Executando clustering automático para agrupar métricas similares..."):
+                    # Preparar dados para clustering
+                    columns_to_cluster = ['classificacao', 'tipo_sazonalidade', 'algoritmo_anomalia', 'saltos_detectados']
+                    
+                    # Verificar se todas as colunas existem
+                    available_cols = [col for col in columns_to_cluster if col in results_df.columns]
+                    
+                    if len(available_cols) < 2:
+                        st.warning("⚠️ Dados insuficientes para clustering. Necessário pelo menos 2 colunas.")
+                    elif len(results_df) < 4:
+                        st.warning("⚠️ Número de métricas insuficiente para clustering. Necessário pelo menos 4 métricas.")
+                    else:
+                        try:
+                            # Criar analisador de clustering
+                            clustering = ClusteringAnalyzer(results_df)
+                            clustering.prepare_data(available_cols)
+                            
+                            # Executar clustering AUTOMÁTICO (n_clusters=None)
+                            cluster_labels, silhouette, cluster_info = clustering.perform_clustering(n_clusters=None)
+                            
+                            # Atualizar session state com resultados clusterizados
+                            st.session_state['batch_results'] = clustering.df
+                            
+                            # Mostrar métricas de qualidade
+                            st.success("✅ Clustering concluído automaticamente!")
+                            
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric(
+                                "Número de Clusters", 
+                                clustering.n_clusters,
+                                help="Determinado automaticamente pelo algoritmo"
+                            )
+                            
+                            # Determinar qualidade baseado no silhouette score
+                            if silhouette >= 0.7:
+                                quality = "⭐⭐⭐ Excelente"
+                                quality_color = "green"
+                            elif silhouette >= 0.5:
+                                quality = "⭐⭐ Bom"
+                                quality_color = "blue"
+                            elif silhouette >= 0.25:
+                                quality = "⭐ Razoável"
+                                quality_color = "orange"
+                            else:
+                                quality = "⚠️ Fraco"
+                                quality_color = "red"
+                            
+                            col2.metric(
+                                "Silhouette Score", 
+                                f"{silhouette:.3f}",
+                                delta=quality,
+                                help="Mede a qualidade dos clusters. Valores próximos de 1 indicam clusters bem definidos"
+                            )
+                            col3.metric("Métricas Analisadas", len(results_df))
+                            
+                            st.info(f"🤖 **O algoritmo identificou {clustering.n_clusters} grupos naturais** de métricas com comportamentos similares (Colunas: {', '.join(available_cols)})")
+                            
+                            # Gerar resumo dos clusters
+                            cluster_summary = clustering.generate_cluster_summary()
+                            
+                            # Exibir resumo dos clusters
+                            st.subheader("📋 Características dos Clusters Identificados")
+                            
+                            for cluster in cluster_summary['clusters']:
+                                with st.expander(
+                                    f"🔹 Cluster {cluster['id']} - {cluster['size']} métricas ({cluster['percentage']}%)",
+                                    expanded=(cluster['id'] == 0)  # Expandir o primeiro por padrão
+                                ):
+                                    st.markdown(f"**Características predominantes:** {cluster['description']}")
+                                    
+                                    # Mostrar métricas do cluster
+                                    cluster_data = clustering.df[clustering.df['cluster'] == cluster['id']]
+                                    
+                                    # Mostrar apenas colunas relevantes
+                                    display_cols = ['metrica'] + available_cols
+                                    if 'media' in cluster_data.columns:
+                                        display_cols.append('media')
+                                    if 'desvio_padrao' in cluster_data.columns:
+                                        display_cols.append('desvio_padrao')
+                                    
+                                    st.dataframe(
+                                        cluster_data[display_cols].head(10),
+                                        use_container_width=True
+                                    )
+                                    
+                                    if len(cluster_data) > 10:
+                                        st.caption(f"💡 Mostrando 10 de {len(cluster_data)} métricas neste cluster")
+                            
+                            # Visualizações dos clusters
+                            st.subheader("📊 Visualizações dos Clusters")
+                            plots = clustering.create_cluster_visualization()
+                            
+                            st.plotly_chart(plots['distribution'], use_container_width=True)
+                            st.plotly_chart(plots['characteristics'], use_container_width=True)
+                            
+                            if 'scatter' in plots:
+                                st.plotly_chart(plots['scatter'], use_container_width=True)
+                            
+                            # Download dos dados com clusters
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.download_button(
+                                    "💾 Download Consolidado (CSV)",
+                                    csv_data,
+                                    "analise_consolidada.csv",
+                                    "text/csv",
+                                    use_container_width=True
+                                )
+                            with col2:
+                                clustered_csv = clustering.df.to_csv(index=False)
+                                st.download_button(
+                                    "💾 Download com Clusters (CSV)",
+                                    clustered_csv,
+                                    "analise_consolidada_com_clusters.csv",
+                                    "text/csv",
+                                    use_container_width=True
+                                )
+                        
+                        except Exception as e:
+                            st.error(f"❌ Erro ao executar clustering: {e}")
+                            st.info("Os resultados da análise em lote estão disponíveis acima para download.")
+        else:
+            st.warning("Nenhum arquivo CSV encontrado na pasta especificada")
+    else:
+        st.error("A pasta especificada não existe")
+
+
+def main():
+    """Função principal da aplicação"""
+    st.title("📊 Sistema Integrado Datadog + Análise de Séries Temporais")
+    st.markdown("Coleta de dados do Datadog e análise avançada de séries temporais")
+    st.markdown("---")
+
+    # Criação de abas
+    tab1, tab2, tab3 = st.tabs([
+        "📥 Coletar Dados do Datadog", 
+        "📈 Analisar Séries Temporais", 
+        "📂 Análise em Lote"
+    ])
+
+    with tab1:
+        tab_collect_datadog()
+
+    with tab2:
+        tab_analyze_time_series()
+
+    with tab3:
+        tab_batch_analysis()
+
+
+if __name__ == "__main__":
+    main()
