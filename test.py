@@ -130,7 +130,8 @@ class AdvancedRecurrenceAnalyzer:
         'cv_robusto': float('inf'),
         'cv_winsorizado': float('inf'),
         'cv_iqr': float('inf'),
-        'outliers_percent': 0
+        'outliers_percent': 0,
+        'diferenca_percentual': 0
       }
 
     # Calcular todos os CVs
@@ -139,29 +140,29 @@ class AdvancedRecurrenceAnalyzer:
     cv_wins = self._cv_winsorizado(intervals)
     cv_iqr_val = self._cv_iqr(intervals)
     
-    # Detectar outliers
+    # Detectar outliers com Z-score
     z_scores = np.abs(stats.zscore(intervals))
     outliers_percent = np.sum(z_scores > 3) / len(intervals)
     
-    # Decidir qual usar
+    # Calcular diferença entre clássico e robusto
+    diferenca_percentual = abs(cv_classico - cv_robusto) / cv_robusto * 100 if cv_robusto > 0 else 0
+    
+    # Decidir qual usar - LÓGICA CORRIGIDA
     if outliers_percent > 0.15:  # Muitos outliers (>15%)
       cv_usado = cv_robusto
-      metodo = '🛡️ Robusto (MAD)'
+      metodo = 'Robusto (MAD)'
     elif outliers_percent > 0.10:  # Alguns outliers (>10%)
-      cv_usado = cv_wins
-      metodo = '✂️ Winsorizado'
+      cv_usado = cv_robusto
+      metodo = 'Robusto (MAD)'
+    elif diferenca_percentual > 20:  # Diferença significativa entre CVs
+      cv_usado = cv_robusto
+      metodo = 'Robusto (MAD)'
     elif outliers_percent > 0.05:  # Poucos outliers (>5%)
-      # Comparar diferença entre clássico e robusto
-      diferenca_rel = abs(cv_classico - cv_robusto) / cv_robusto if cv_robusto > 0 else 0
-      if diferenca_rel > 0.2:  # >20% de diferença
-        cv_usado = cv_robusto
-        metodo = '🛡️ Robusto (MAD)'
-      else:
-        cv_usado = cv_wins
-        metodo = '✂️ Winsorizado'
-    else:  # Dados comportados
+      cv_usado = cv_wins
+      metodo = 'Winsorizado'
+    else:  # Dados bem comportados
       cv_usado = cv_classico
-      metodo = '📊 Clássico'
+      metodo = 'Clássico'
     
     return {
       'cv': cv_usado,
@@ -170,7 +171,8 @@ class AdvancedRecurrenceAnalyzer:
       'cv_robusto': cv_robusto,
       'cv_winsorizado': cv_wins,
       'cv_iqr': cv_iqr_val,
-      'outliers_percent': outliers_percent * 100
+      'outliers_percent': outliers_percent * 100,
+      'diferenca_percentual': diferenca_percentual
     }
 
   # ========== FIM DOS MÉTODOS DE CV ==========
@@ -286,6 +288,7 @@ class AdvancedRecurrenceAnalyzer:
       'cv_iqr': results['basic_stats'].get('cv_iqr'),
       'cv_metodo': results['basic_stats'].get('cv_metodo'),
       'outliers_percent': results['basic_stats'].get('outliers_percent'),
+      'diferenca_cv_percent': results['basic_stats'].get('diferenca_percentual'),
       'regularity_score': results['regularity'].get('regularity_score'),
       'periodicity_detected': results['periodicity'].get('has_strong_periodicity', False),
       'dominant_period_hours': results['periodicity'].get('dominant_period_hours'),
@@ -316,6 +319,7 @@ class AdvancedRecurrenceAnalyzer:
       'cv_iqr': cv_adaptativo_result['cv_iqr'],
       'cv_metodo': cv_adaptativo_result['metodo'],
       'outliers_percent': cv_adaptativo_result['outliers_percent'],
+      'diferenca_percentual': cv_adaptativo_result['diferenca_percentual'],
       'q25': float(np.percentile(intervals, 25)),
       'q75': float(np.percentile(intervals, 75)),
       'iqr': float(np.percentile(intervals, 75) - np.percentile(intervals, 25))
@@ -330,7 +334,7 @@ class AdvancedRecurrenceAnalyzer:
       col4.metric("⚡ Mínimo", f"{stats_dict['min']:.1f}h")
       col5.metric("🐌 Máximo", f"{stats_dict['max']:.1f}h")
       
-      # NOVA SEÇÃO: Comparação de CVs
+      # NOVA SEÇÃO: Comparação de CVs - LÓGICA CORRIGIDA
       st.markdown("---")
       st.subheader("🎯 Coeficiente de Variação (CV) - Análise Robusta")
       
@@ -341,38 +345,51 @@ class AdvancedRecurrenceAnalyzer:
       col4.metric("CV IQR", f"{stats_dict['cv_iqr']:.3f}")
       
       # Mostrar qual foi escolhido
-      st.info(f"**✅ CV Selecionado:** {stats_dict['cv_metodo']} = **{cv_usado:.3f}**")
+      st.success(f"**✅ CV Selecionado:** {stats_dict['cv_metodo']} = **{cv_usado:.3f}**")
       
-      # Alertas sobre outliers
-      if stats_dict['outliers_percent'] > 15:
-        st.error(f"🔴 **{stats_dict['outliers_percent']:.1f}%** de outliers detectados - Usando CV Robusto para máxima precisão!")
-      elif stats_dict['outliers_percent'] > 10:
-        st.warning(f"⚠️ **{stats_dict['outliers_percent']:.1f}%** de outliers detectados - Usando CV Robusto para maior precisão")
-      elif stats_dict['outliers_percent'] > 5:
-        st.info(f"📊 **{stats_dict['outliers_percent']:.1f}%** de outliers detectados - CV ajustado automaticamente")
-      else:
-        st.success(f"✅ Poucos outliers ({stats_dict['outliers_percent']:.1f}%) - Dados bem comportados")
+      # Alertas sobre outliers - LÓGICA CORRIGIDA E SIMPLIFICADA
+      outliers_pct = stats_dict['outliers_percent']
+      diferenca_pct = stats_dict['diferenca_percentual']
       
-      # Mostrar diferença percentual entre CVs
-      diferenca = abs(stats_dict['cv_classico'] - stats_dict['cv_robusto'])
-      diferenca_pct = (diferenca / stats_dict['cv_robusto'] * 100) if stats_dict['cv_robusto'] > 0 else 0
-      if diferenca_pct > 20:
-        st.warning(f"⚠️ Diferença de **{diferenca_pct:.1f}%** entre CV Clássico e Robusto - Forte presença de outliers!")
-      elif diferenca_pct > 10:
-        st.info(f"📊 Diferença de **{diferenca_pct:.1f}%** entre CV Clássico e Robusto")
+      # Uma única mensagem clara baseada no método escolhido
+      if stats_dict['cv_metodo'] == 'Robusto (MAD)':
+        if outliers_pct > 15:
+          st.error(f"🔴 **Alta presença de outliers ({outliers_pct:.1f}%)** - CV Robusto essencial para precisão!")
+        elif outliers_pct > 10:
+          st.warning(f"⚠️ **Presença moderada de outliers ({outliers_pct:.1f}%)** - CV Robusto garante maior precisão")
+        elif diferenca_pct > 20:
+          st.warning(f"⚠️ **Diferença de {diferenca_pct:.1f}% entre CVs** - CV Robusto mais confiável")
+        else:
+          st.info(f"📊 Alguns outliers detectados ({outliers_pct:.1f}%) - Usando CV Robusto por segurança")
+      elif stats_dict['cv_metodo'] == 'Winsorizado':
+        st.info(f"📊 Outliers moderados ({outliers_pct:.1f}%) - CV Winsorizado mitiga o impacto")
+      else:  # Clássico
+        st.success(f"✅ Dados bem comportados (outliers: {outliers_pct:.1f}%) - CV Clássico é suficiente")
       
       # Gráfico comparativo dos CVs
       fig = go.Figure(data=[
-        go.Bar(name='CVs', x=['Clássico', 'Robusto', 'Winsorizado', 'IQR'],
+        go.Bar(name='Métodos de CV', 
+               x=['Clássico', 'Robusto', 'Winsorizado', 'IQR'],
                y=[stats_dict['cv_classico'], stats_dict['cv_robusto'], 
                   stats_dict['cv_winsorizado'], stats_dict['cv_iqr']],
-               marker_color=['lightblue' if stats_dict['cv_metodo'] == '📊 Clássico' else 'gray',
-                           'green' if '🛡️ Robusto' in stats_dict['cv_metodo'] else 'gray',
-                           'orange' if '✂️ Winsorizado' in stats_dict['cv_metodo'] else 'gray',
-                           'purple'])
+               marker_color=[
+                 'green' if stats_dict['cv_metodo'] == 'Clássico' else 'lightgray',
+                 'green' if stats_dict['cv_metodo'] == 'Robusto (MAD)' else 'lightgray',
+                 'green' if stats_dict['cv_metodo'] == 'Winsorizado' else 'lightgray',
+                 'lightgray'
+               ],
+               text=[f"{stats_dict['cv_classico']:.3f}", 
+                     f"{stats_dict['cv_robusto']:.3f}",
+                     f"{stats_dict['cv_winsorizado']:.3f}",
+                     f"{stats_dict['cv_iqr']:.3f}"],
+               textposition='outside')
       ])
-      fig.update_layout(title="Comparação dos Métodos de CV", 
-                       yaxis_title="Valor do CV", height=300)
+      fig.update_layout(
+        title="Comparação dos Métodos de CV (Verde = Selecionado)", 
+        yaxis_title="Valor do CV", 
+        height=300,
+        showlegend=False
+      )
       st.plotly_chart(fig, use_container_width=True, key=f'cv_comparison_{self.alert_id}')
       
     return stats_dict
@@ -382,7 +399,7 @@ class AdvancedRecurrenceAnalyzer:
     cv_result = self._cv_adaptativo(intervals)
     cv = cv_result['cv']
     
-    # Classificação baseada no CV adaptativo
+    # Classificação baseada no CV adaptativo - USANDO O CV CORRETO
     if cv < 0.20:
       regularity_score, pattern_type, pattern_color = 95, "🟢 ALTAMENTE REGULAR", "green"
     elif cv < 0.40:
@@ -395,24 +412,22 @@ class AdvancedRecurrenceAnalyzer:
       regularity_score, pattern_type, pattern_color = 15, "🔴 MUITO IRREGULAR", "red"
 
     if render:
-      st.subheader("🎯 2. Regularidade (com CV Robusto)")
+      st.subheader("🎯 2. Regularidade (com CV Adaptativo)")
       col1, col2 = st.columns([3, 1])
       with col1:
         st.markdown(f"**Classificação:** {pattern_type}")
-        st.write(f"**CV ({cv_result['metodo']}):** {cv:.2%}")
+        st.write(f"**CV ({cv_result['metodo']}):** {cv:.3f} ({cv:.1%})")
         
         # Mostrar comparação se houver diferença significativa
-        if cv_result['outliers_percent'] > 5:
-          st.write(f"**CV Clássico:** {cv_result['cv_classico']:.2%}")
-          diferenca = abs(cv_result['cv_classico'] - cv) / cv * 100
-          st.write(f"**Diferença:** {diferenca:.1f}%")
+        if cv_result['diferenca_percentual'] > 10:
+          st.info(f"ℹ️ CV Clássico seria {cv_result['cv_classico']:.3f} (diferença de {cv_result['diferenca_percentual']:.1f}%)")
         
         if len(intervals) >= 3:
           _, p_value = stats.shapiro(intervals)
           if p_value > 0.05:
-            st.info("📊 Distribuição aproximadamente normal")
+            st.success("📊 Distribuição aproximadamente normal")
           else:
-            st.warning("📊 Distribuição não-normal")
+            st.info("📊 Distribuição não-normal")
             
       with col2:
         fig = go.Figure(go.Indicator(
@@ -424,7 +439,12 @@ class AdvancedRecurrenceAnalyzer:
         fig.update_layout(height=250)
         st.plotly_chart(fig, use_container_width=True, key=f'reg_gauge_{self.alert_id}')
         
-    return {'cv': cv, 'regularity_score': regularity_score, 'type': pattern_type, 'cv_metodo': cv_result['metodo']}
+    return {
+      'cv': cv, 
+      'regularity_score': regularity_score, 
+      'type': pattern_type, 
+      'cv_metodo': cv_result['metodo']
+    }
 
   def _analyze_periodicity(self, intervals, render=True):
     if len(intervals) < 10:
@@ -690,7 +710,10 @@ class AdvancedRecurrenceAnalyzer:
     return {'anomaly_rate': anomaly_rate, 'total_anomalies': total_anomalies}
 
   def _calculate_predictability(self, intervals, render=True):
-    cv = float(np.std(intervals) / np.mean(intervals) if np.mean(intervals) > 0 else float('inf'))
+    # USAR CV ADAPTATIVO AQUI TAMBÉM
+    cv_result = self._cv_adaptativo(intervals)
+    cv = cv_result['cv']
+    
     if cv < 0.20:
       predictability = 95
     elif cv < 0.40:
@@ -797,7 +820,13 @@ class AdvancedRecurrenceAnalyzer:
       start = i * period_size
       end = (i + 1) * period_size if i < n_periods - 1 else len(intervals)
       period_intervals = intervals[start:end]
-      periods_stats.append({'period': i + 1, 'mean': float(np.mean(period_intervals)), 'cv': float(np.std(period_intervals) / np.mean(period_intervals) if np.mean(period_intervals) > 0 else 0)})
+      # USAR CV ROBUSTO AQUI TAMBÉM
+      cv_period = self._cv_adaptativo(period_intervals)['cv']
+      periods_stats.append({
+        'period': i + 1, 
+        'mean': float(np.mean(period_intervals)), 
+        'cv': cv_period
+      })
 
     periods_df = pd.DataFrame(periods_stats)
     slope = float(np.polyfit(periods_df['period'], periods_df['cv'], 1)[0])
@@ -806,7 +835,7 @@ class AdvancedRecurrenceAnalyzer:
       st.subheader("📈 15. Maturidade do Padrão")
       fig = go.Figure()
       fig.add_trace(go.Scatter(x=periods_df['period'], y=periods_df['cv'], mode='lines+markers', name='CV', line=dict(color='red', width=3)))
-      fig.update_layout(title="Evolução da Variabilidade", xaxis_title="Período", yaxis_title="CV", height=300)
+      fig.update_layout(title="Evolução da Variabilidade (CV Robusto)", xaxis_title="Período", yaxis_title="CV", height=300)
       st.plotly_chart(fig, use_container_width=True, key=f'maturity_{self.alert_id}')
       if slope < -0.05:
         st.success("✅ **Amadurecendo**: Variabilidade decrescente")
@@ -825,7 +854,9 @@ class AdvancedRecurrenceAnalyzer:
   def _calculate_prediction_confidence(self, intervals, render=True):
     if len(intervals) < 10:
       return {'confidence': 'low', 'score': 0}
-    cv = float(np.std(intervals) / np.mean(intervals) if np.mean(intervals) > 0 else float('inf'))
+    
+    # USAR CV ROBUSTO
+    cv = self._cv_adaptativo(intervals)['cv']
     n_samples = len(intervals)
     regularity_score = max(0, 100 - cv * 100)
     sample_score = min(100, (n_samples / 50) * 100)
@@ -989,10 +1020,10 @@ class AdvancedRecurrenceAnalyzer:
     return {'overall_randomness_score': randomness_score, 'hurst': hurst, 'perm_entropy': perm_entropy}
 
   # ----------------------------
-  # Classificação final (interna)
+  # Classificação final (interna) - CORRIGIDA PARA USAR CV ROBUSTO
   # ----------------------------
   def _calculate_final_score_validated(self, results, df, intervals):
-    # 1. Regularidade 
+    # 1. Regularidade - JÁ USA O CV ADAPTATIVO
     regularity_score = results['regularity']['regularity_score'] * 0.25
 
     # 2. Periodicidade
@@ -1003,7 +1034,7 @@ class AdvancedRecurrenceAnalyzer:
     else:
       periodicity_score = 0 * 0.25
 
-    # 3. Previsibilidade 
+    # 3. Previsibilidade - JÁ USA O CV ADAPTATIVO
     predictability_score = results['predictability']['predictability_score'] * 0.15
 
     # 4. Concentração Temporal 
@@ -1068,9 +1099,10 @@ class AdvancedRecurrenceAnalyzer:
       
       # Mostrar qual CV foi usado
       cv_metodo = results['basic_stats'].get('cv_metodo', 'clássico')
-      st.info(f"**Método de CV utilizado:** {cv_metodo}")
+      cv_usado = results['basic_stats'].get('cv', 0)
+      st.success(f"**✅ Método de CV utilizado no score:** {cv_metodo} = {cv_usado:.3f}")
       
-      st.markdown("#### 📊 Breakdown dos Critérios VALIDADOS")
+      st.markdown("#### 📊 Breakdown dos Critérios VALIDADOS (com CV Robusto)")
       total_occurrences = len(df)
       period_days = (df['created_on'].max() - df['created_on'].min()).days + 1
       freq_per_week = (total_occurrences / period_days * 7) if period_days > 0 else 0
@@ -1093,7 +1125,7 @@ class AdvancedRecurrenceAnalyzer:
         frequency_pts = 40 * 0.15 if freq_per_week >= 0.5 else 10 * 0.15
 
       breakdown = {
-        '1. Regularidade (25%)': regularity_pts,
+        f'1. Regularidade (25%) - CV {cv_metodo}': regularity_pts,
         '2. Periodicidade (25%)': periodicity_pts,
         '3. Previsibilidade (15%)': predictability_pts,
         '4. Concentração Temporal (20%)': concentration_pts,
@@ -1125,6 +1157,7 @@ class AdvancedRecurrenceAnalyzer:
       'cv_robusto': results['basic_stats']['cv_robusto'],
       'cv_metodo': results['basic_stats']['cv_metodo'],
       'outliers_percent': results['basic_stats']['outliers_percent'],
+      'diferenca_cv_percent': results['basic_stats']['diferenca_percentual'],
       'regularidade': results['regularity']['regularity_score'],
       'periodicidade': results['periodicity'].get('has_strong_periodicity', False),
       'previsibilidade': results['predictability']['predictability_score'],
@@ -1332,39 +1365,13 @@ def main():
             col1, col2 = st.columns(2)
             csv_full = df_consolidated.to_csv(index=False)
             col1.download_button("⬇️ CSV Completo", csv_full, f"completo_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", "text/csv", use_container_width=True)
-            summary_cols = ['u_alert_id', 'score', 'classification', 'total_occurrences', 'cv', 'cv_robusto', 'cv_metodo', 'outliers_percent']
+            summary_cols = ['u_alert_id', 'score', 'classification', 'total_occurrences', 'cv', 'cv_robusto', 'cv_metodo', 'outliers_percent', 'diferenca_cv_percent']
             available_summary = [col for col in summary_cols if col in df_consolidated.columns]
             summary = df_consolidated[available_summary].copy()
             csv_summary = summary.to_csv(index=False)
             col2.download_button("⬇️ CSV Resumido", csv_summary, f"resumo_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", "text/csv", use_container_width=True)
   else:
     st.info("👆 Faça upload de um CSV")
-    with st.expander("📖 Instruções e Validação dos Critérios"):
-      st.markdown("""
-      ### ✅ CRITÉRIOS VALIDADOS COM CV ROBUSTO
-
-      1. **Regularidade (25%)** - Consistência via **CV Adaptativo**
-         - 🛡️ **CV Robusto (MAD)**: Usa mediana e MAD para resistir a outliers
-         - ✂️ **CV Winsorizado**: Remove extremos antes de calcular
-         - 📊 **CV Clássico**: Quando dados são bem comportados
-         - 🎯 **Seleção Automática**: Baseada em % de outliers
-         
-      2. **Periodicidade (25%)** - Detecta ciclos via FFT
-      
-      3. **Previsibilidade (15%)** - Indica se podemos prever
-      
-      4. **Concentração Temporal (20%)** - Horários/dias fixos
-      
-      5. **Frequência Absoluta (15%)** - Volume mínimo necessário
-      
-      ### 🛡️ Vantagens do CV Robusto:
-      
-      - **Imune a outliers**: Não é afetado por valores extremos
-      - **Mais preciso**: Reflete o padrão real dos dados
-      - **Adaptativo**: Escolhe automaticamente o melhor método
-      - **Transparente**: Mostra todos os CVs para comparação
-      """)
-
 
 if __name__ == "__main__":
   main()
