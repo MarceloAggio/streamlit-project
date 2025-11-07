@@ -1502,39 +1502,6 @@ def main():
             col2.download_button("⬇️ CSV Resumido", csv_summary, f"resumo_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", "text/csv", use_container_width=True)
   else:
     st.info("👆 Faça upload de um CSV")
-    with st.expander("📖 Instruções e Validação dos Critérios"):
-      st.markdown("""
-      ### ✅ CRITÉRIOS VALIDADOS COM CV ADAPTATIVO
-
-      1. **Regularidade (25%)** - Consistência via **CV Adaptativo**
-         - 🛡️ **CV Robusto (MAD)**: Usa mediana e MAD para resistir a outliers
-         - ✂️ **CV Winsorizado**: Remove extremos antes de calcular
-         - 📊 **CV Clássico**: Quando dados são bem comportados
-         - 🎯 **Seleção Automática**: Baseada em % de outliers e diferença entre CVs
-         
-      2. **Periodicidade (25%)** - Detecta ciclos via FFT
-      
-      3. **Previsibilidade (15%)** - Usa CV adaptativo para melhor precisão
-      
-      4. **Concentração Temporal (20%)** - Horários/dias fixos
-      
-      5. **Frequência Absoluta (15%)** - Volume mínimo necessário
-      
-      ### 🛡️ Vantagens do CV Adaptativo:
-      
-      - **Inteligente**: Escolhe automaticamente o melhor método
-      - **Robusto**: Imune a outliers quando necessário
-      - **Preciso**: Usa CV Clássico quando dados são limpos
-      - **Transparente**: Mostra todos os CVs para comparação
-      - **Confiável**: O CV selecionado determina o score final
-      
-      ### 🚨 Análise de Outliers (Seção 0):
-      
-      - **Detecção Múltipla**: Z-Score, IQR, Isolation Forest
-      - **Visualização**: Gráfico destacando outliers vs normais
-      - **Impacto no CV**: Mostra como outliers afetam o método selecionado
-      """)
-
 
 if __name__ == "__main__":
   main()
