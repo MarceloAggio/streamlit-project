@@ -13,13 +13,10 @@ import holidays
 from functools import partial
 from collections import Counter
 import math
-import sys
 import os
-
-# Adicionar src ao path para importar módulos customizados
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-from functions.cache_manager import CacheManager
-from functions.comparator import AlertComparator
+import json
+import pickle
+from pathlib import Path
 
 warnings.filterwarnings('ignore')
 
@@ -29,6 +26,327 @@ st.set_page_config(
   layout="wide",
   initial_sidebar_state="expanded"
 )
+
+
+# ============================================================
+# CACHE MANAGER - Gerenciamento de Cache
+# ============================================================
+class CacheManager:
+    """
+    Gerencia cache de resultados de análise para evitar reprocessamento.
+    Simula localStorage usando arquivos locais.
+    """
+    
+    def __init__(self, cache_dir="cache"):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(exist_ok=True)
+        self.analysis_cache_path = self.cache_dir / "analysis_results.pkl"
+        self.metadata_path = self.cache_dir / "metadata.json"
+    
+    def save_analysis_results(self, df_results, metadata=None):
+        """Salva resultados da análise completa em cache."""
+        try:
+            df_results.to_pickle(self.analysis_cache_path)
+            
+            if metadata is None:
+                metadata = {}
+            
+            metadata.update({
+                'timestamp': datetime.now().isoformat(),
+                'total_alerts': len(df_results),
+                'file_size': os.path.getsize(self.analysis_cache_path)
+            })
+            
+            with open(self.metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            return True
+        except Exception as e:
+            print(f"Erro ao salvar cache: {e}")
+            return False
+    
+    def load_analysis_results(self):
+        """Carrega resultados da análise do cache."""
+        try:
+            if not self.analysis_cache_path.exists():
+                return None, None
+            
+            df_results = pd.read_pickle(self.analysis_cache_path)
+            
+            metadata = {}
+            if self.metadata_path.exists():
+                with open(self.metadata_path, 'r') as f:
+                    metadata = json.load(f)
+            
+            return df_results, metadata
+        except Exception as e:
+            print(f"Erro ao carregar cache: {e}")
+            return None, None
+    
+    def has_cache(self):
+        """Verifica se existe cache disponível."""
+        return self.analysis_cache_path.exists() and self.metadata_path.exists()
+    
+    def get_cache_info(self):
+        """Retorna informações sobre o cache existente."""
+        if not self.has_cache():
+            return None
+        
+        try:
+            with open(self.metadata_path, 'r') as f:
+                metadata = json.load(f)
+            
+            metadata['file_exists'] = self.analysis_cache_path.exists()
+            metadata['file_size_mb'] = os.path.getsize(self.analysis_cache_path) / (1024 * 1024)
+            
+            return metadata
+        except Exception as e:
+            print(f"Erro ao obter info do cache: {e}")
+            return None
+    
+    def clear_cache(self):
+        """Limpa o cache existente."""
+        try:
+            if self.analysis_cache_path.exists():
+                os.remove(self.analysis_cache_path)
+            if self.metadata_path.exists():
+                os.remove(self.metadata_path)
+            return True
+        except Exception as e:
+            print(f"Erro ao limpar cache: {e}")
+            return False
+    
+    def save_comparison_results(self, comparison_data, filename="comparison_results.pkl"):
+        """Salva resultados de comparação em cache."""
+        try:
+            cache_path = self.cache_dir / filename
+            
+            if isinstance(comparison_data, pd.DataFrame):
+                comparison_data.to_pickle(cache_path)
+            else:
+                with open(cache_path, 'wb') as f:
+                    pickle.dump(comparison_data, f)
+            
+            return True
+        except Exception as e:
+            print(f"Erro ao salvar comparação: {e}")
+            return False
+    
+    def load_comparison_results(self, filename="comparison_results.pkl"):
+        """Carrega resultados de comparação do cache."""
+        try:
+            cache_path = self.cache_dir / filename
+            
+            if not cache_path.exists():
+                return None
+            
+            try:
+                return pd.read_pickle(cache_path)
+            except:
+                with open(cache_path, 'rb') as f:
+                    return pickle.load(f)
+        except Exception as e:
+            print(f"Erro ao carregar comparação: {e}")
+            return None
+
+
+# ============================================================
+# ALERT COMPARATOR - Comparação Código vs Athena
+# ============================================================
+class AlertComparator:
+    """
+    Compara resultados de análise de reincidência entre o código local e o Athena.
+    """
+    
+    def __init__(self, df_code_results, df_athena):
+        self.df_code = df_code_results.copy()
+        self.df_athena = df_athena.copy()
+        self.comparison_results = None
+    
+    def _is_reincident_code(self, classification):
+        """Verifica se a classificação do código indica reincidência."""
+        if pd.isna(classification):
+            return False
+        
+        classification_str = str(classification).upper()
+        
+        # R1 e R2 são considerados reincidentes
+        if 'CRÍTICO' in classification_str or 'R1' in classification_str:
+            return True
+        if 'PARCIALMENTE REINCIDENTE' in classification_str or 'R2' in classification_str:
+            return True
+        
+        return False
+    
+    def _is_reincident_athena(self, u_symptom):
+        """Verifica se o Athena classifica como reincidência."""
+        if pd.isna(u_symptom):
+            return False
+        
+        return 'reincidência' in str(u_symptom).lower() or 'reincidencia' in str(u_symptom).lower()
+    
+    def compare(self):
+        """Executa a comparação completa entre os dois datasets."""
+        # Preparar dados do código
+        df_code_prep = self.df_code[['u_alert_id', 'classification', 'score', 'total_occurrences']].copy()
+        df_code_prep['is_reincident_code'] = df_code_prep['classification'].apply(self._is_reincident_code)
+        
+        # Preparar dados do Athena - agrupar por u_alert_id
+        df_athena_grouped = self.df_athena.groupby('u_alert_id').agg({
+            'u_symptom': lambda x: list(x)
+        }).reset_index()
+        
+        df_athena_grouped['symptom_list'] = df_athena_grouped['u_symptom']
+        df_athena_grouped['has_reincidence'] = df_athena_grouped['symptom_list'].apply(
+            lambda symptoms: any(self._is_reincident_athena(s) for s in symptoms)
+        )
+        df_athena_grouped['reincidence_count'] = df_athena_grouped['symptom_list'].apply(
+            lambda symptoms: sum(1 for s in symptoms if self._is_reincident_athena(s))
+        )
+        df_athena_grouped['total_athena_records'] = df_athena_grouped['symptom_list'].apply(len)
+        
+        # Merge dos datasets
+        comparison = pd.merge(
+            df_code_prep,
+            df_athena_grouped[['u_alert_id', 'has_reincidence', 'reincidence_count', 'total_athena_records']],
+            on='u_alert_id',
+            how='outer',
+            indicator=True
+        )
+        
+        comparison.rename(columns={'has_reincidence': 'is_reincident_athena'}, inplace=True)
+        
+        # Preencher NaN
+        comparison['is_reincident_code'] = comparison['is_reincident_code'].fillna(False)
+        comparison['is_reincident_athena'] = comparison['is_reincident_athena'].fillna(False)
+        
+        # Criar categorias de comparação
+        def categorize_match(row):
+            code_r = row['is_reincident_code']
+            athena_r = row['is_reincident_athena']
+            
+            if code_r and athena_r:
+                return '✅ CONCORDAM - Ambos Reincidentes'
+            elif not code_r and not athena_r:
+                return '✅ CONCORDAM - Ambos Não-Reincidentes'
+            elif code_r and not athena_r:
+                return '⚠️ DIVERGEM - Código diz SIM, Athena diz NÃO'
+            elif not code_r and athena_r:
+                return '⚠️ DIVERGEM - Código diz NÃO, Athena diz SIM'
+            else:
+                return '❓ INDETERMINADO'
+        
+        comparison['status_comparacao'] = comparison.apply(categorize_match, axis=1)
+        
+        # Adicionar informação sobre presença nos datasets
+        def get_presence(merge_indicator):
+            if merge_indicator == 'both':
+                return '🟢 Ambos Datasets'
+            elif merge_indicator == 'left_only':
+                return '🔵 Apenas Código'
+            else:
+                return '🟡 Apenas Athena'
+        
+        comparison['presenca'] = comparison['_merge'].apply(get_presence)
+        comparison = comparison.drop('_merge', axis=1)
+        
+        # Reordenar colunas
+        cols_order = [
+            'u_alert_id',
+            'status_comparacao',
+            'presenca',
+            'is_reincident_code',
+            'is_reincident_athena',
+            'classification',
+            'score',
+            'total_occurrences',
+            'reincidence_count',
+            'total_athena_records'
+        ]
+        
+        cols_order = [col for col in cols_order if col in comparison.columns]
+        comparison = comparison[cols_order]
+        
+        self.comparison_results = comparison
+        return comparison
+    
+    def get_summary_statistics(self):
+        """Retorna estatísticas resumidas da comparação."""
+        if self.comparison_results is None:
+            self.compare()
+        
+        df = self.comparison_results
+        
+        total_alerts = len(df)
+        
+        # Contagens por categoria
+        concordam_reincidentes = len(df[df['status_comparacao'] == '✅ CONCORDAM - Ambos Reincidentes'])
+        concordam_nao_reincidentes = len(df[df['status_comparacao'] == '✅ CONCORDAM - Ambos Não-Reincidentes'])
+        divergem_code_sim = len(df[df['status_comparacao'] == '⚠️ DIVERGEM - Código diz SIM, Athena diz NÃO'])
+        divergem_code_nao = len(df[df['status_comparacao'] == '⚠️ DIVERGEM - Código diz NÃO, Athena diz SIM'])
+        
+        total_concordam = concordam_reincidentes + concordam_nao_reincidentes
+        total_divergem = divergem_code_sim + divergem_code_nao
+        
+        taxa_concordancia = (total_concordam / total_alerts * 100) if total_alerts > 0 else 0
+        
+        apenas_codigo = len(df[df['presenca'] == '🔵 Apenas Código'])
+        apenas_athena = len(df[df['presenca'] == '🟡 Apenas Athena'])
+        ambos = len(df[df['presenca'] == '🟢 Ambos Datasets'])
+        
+        return {
+            'total_alerts': total_alerts,
+            'concordam': {
+                'total': total_concordam,
+                'reincidentes': concordam_reincidentes,
+                'nao_reincidentes': concordam_nao_reincidentes,
+                'percentual': taxa_concordancia
+            },
+            'divergem': {
+                'total': total_divergem,
+                'code_sim_athena_nao': divergem_code_sim,
+                'code_nao_athena_sim': divergem_code_nao,
+                'percentual': (total_divergem / total_alerts * 100) if total_alerts > 0 else 0
+            },
+            'presenca': {
+                'ambos': ambos,
+                'apenas_codigo': apenas_codigo,
+                'apenas_athena': apenas_athena
+            },
+            'metricas_codigo': {
+                'total_reincidentes': int(df['is_reincident_code'].sum()),
+                'percentual_reincidentes': (df['is_reincident_code'].sum() / total_alerts * 100) if total_alerts > 0 else 0
+            },
+            'metricas_athena': {
+                'total_reincidentes': int(df['is_reincident_athena'].sum()),
+                'percentual_reincidentes': (df['is_reincident_athena'].sum() / total_alerts * 100) if total_alerts > 0 else 0
+            }
+        }
+    
+    def get_divergent_cases(self, limit=None):
+        """Retorna casos onde há divergência entre código e Athena."""
+        if self.comparison_results is None:
+            self.compare()
+        
+        divergent = self.comparison_results[
+            self.comparison_results['status_comparacao'].str.contains('DIVERGEM', na=False)
+        ].copy()
+        
+        if limit:
+            divergent = divergent.head(limit)
+        
+        return divergent
+    
+    def export_comparison_report(self, output_path=None):
+        """Exporta relatório completo da comparação."""
+        if self.comparison_results is None:
+            self.compare()
+        
+        if output_path:
+            self.comparison_results.to_csv(output_path, index=False)
+            return output_path
+        else:
+            return self.comparison_results.to_csv(index=False)
 
 
 # Inicializar cache manager
@@ -129,7 +447,6 @@ class AdvancedRecurrenceAnalyzer:
       return
 
     results = {}
-    # executar análises com render=True
     results['basic_stats'] = self._analyze_basic_statistics(intervals_hours, render=True)
     results['regularity'] = self._analyze_regularity(intervals_hours, render=True)
     results['periodicity'] = self._analyze_periodicity(intervals_hours, render=True)
@@ -161,7 +478,6 @@ class AdvancedRecurrenceAnalyzer:
       return None
 
     results = {}
-    # executar análises com render=False (silencioso)
     try:
       results['basic_stats'] = self._analyze_basic_statistics(intervals_hours, render=False)
     except Exception:
@@ -187,7 +503,6 @@ class AdvancedRecurrenceAnalyzer:
     except Exception:
       results['temporal'] = {'hourly_concentration': 0, 'daily_concentration': 0, 'peak_hours': [], 'peak_days': []}
 
-    # calcular score final
     final_score, classification = self._calculate_final_score_validated(results, df, intervals_hours)
 
     return {
@@ -207,9 +522,6 @@ class AdvancedRecurrenceAnalyzer:
       'daily_concentration': results['temporal'].get('daily_concentration'),
     }
 
-  # ----------------------------
-  # Métodos unificados (render opcional)
-  # ----------------------------
   def _analyze_basic_statistics(self, intervals, render=True):
     stats_dict = {
       'mean': float(np.mean(intervals)),
@@ -750,7 +1062,6 @@ class AdvancedRecurrenceAnalyzer:
       col1.metric("Runs Observados", int(runs))
       col2.metric("Runs Esperados", f"{expected_runs:.1f}")
 
-    # Permutation entropy
     def permutation_entropy(series, order=3):
       n = len(series)
       permutations = []
@@ -777,7 +1088,6 @@ class AdvancedRecurrenceAnalyzer:
       else:
         st.warning("⚠️ Baixa complexidade")
 
-    # Hurst
     def hurst_exponent(series):
       n = len(series)
       if n < 20:
@@ -817,7 +1127,7 @@ class AdvancedRecurrenceAnalyzer:
       else:
         st.success("🎲 Random Walk")
 
-    randomness_score = 50 # simplificado
+    randomness_score = 50
     if render:
       st.markdown("---")
       st.metric("Score de Aleatoriedade", f"{randomness_score:.0f}%")
@@ -830,14 +1140,9 @@ class AdvancedRecurrenceAnalyzer:
 
     return {'overall_randomness_score': randomness_score, 'hurst': hurst, 'perm_entropy': perm_entropy}
 
-  # ----------------------------
-  # Classificação final (interna)
-  # ----------------------------
   def _calculate_final_score_validated(self, results, df, intervals):
-    # 1. Regularidade 
     regularity_score = results['regularity']['regularity_score'] * 0.25
 
-    # 2. Periodicidade
     if results['periodicity'].get('has_strong_periodicity', False):
       periodicity_score = 100 * 0.25
     elif results['periodicity'].get('has_moderate_periodicity', False):
@@ -845,10 +1150,8 @@ class AdvancedRecurrenceAnalyzer:
     else:
       periodicity_score = 0 * 0.25
 
-    # 3. Previsibilidade 
     predictability_score = results['predictability']['predictability_score'] * 0.15
 
-    # 4. Concentração Temporal 
     hourly_conc = results['temporal']['hourly_concentration']
     daily_conc = results['temporal']['daily_concentration']
     concentration_score = 0
@@ -859,7 +1162,6 @@ class AdvancedRecurrenceAnalyzer:
     elif hourly_conc > 30 or daily_conc > 30:
       concentration_score = 30 * 0.20
 
-    # 5. Frequência Absoluta 
     total_occurrences = len(df)
     period_days = (df['created_on'].max() - df['created_on'].min()).days + 1
     freq_per_week = (total_occurrences / period_days * 7) if period_days > 0 else 0
@@ -940,13 +1242,11 @@ class AdvancedRecurrenceAnalyzer:
       for criterion, points in breakdown.items():
         st.write(f"• {criterion}: **{points:.1f} pts**")
 
-
     with col2:
       fig = go.Figure(go.Indicator(mode="gauge+number", value=final_score, title={'text': "Score Final"}, gauge={'axis': {'range': [0, 100]}, 'bar': {'color': color}}))
       fig.update_layout(height=300)
       st.plotly_chart(fig, use_container_width=True, key=f'final_gauge_{self.alert_id}')
 
-    # Exportar resumo
     st.markdown("---")
     export_data = {
       'u_alert_id': self.alert_id,
@@ -1126,13 +1426,11 @@ def show_comparison_module(cache_manager):
   
   if uploaded_code and uploaded_athena:
     try:
-      # Carregar CSVs
       df_code = pd.read_csv(uploaded_code)
       df_athena = pd.read_csv(uploaded_athena)
       
       st.success(f"✅ CSV Código: {len(df_code)} registros | CSV Athena: {len(df_athena)} registros")
       
-      # Validar colunas necessárias
       if 'u_alert_id' not in df_code.columns or 'classification' not in df_code.columns:
         st.error("❌ CSV do Código deve conter: 'u_alert_id' e 'classification'")
         return
@@ -1141,29 +1439,23 @@ def show_comparison_module(cache_manager):
         st.error("❌ CSV do Athena deve conter: 'u_alert_id' e 'u_symptom'")
         return
       
-      # Botão para executar comparação
       if st.button("🚀 Executar Comparação", type="primary", use_container_width=True):
         with st.spinner("Comparando dados..."):
-          # Executar comparação
           comparator = AlertComparator(df_code, df_athena)
           df_comparison = comparator.compare()
           summary = comparator.get_summary_statistics()
           
-          # Salvar no cache
           cache_manager.save_comparison_results(df_comparison)
           
-          # Exibir resultados
           st.markdown("---")
           st.header("📊 Resultados da Comparação")
           
-          # Métricas gerais
           col1, col2, col3, col4 = st.columns(4)
           col1.metric("📋 Total de Alertas", summary['total_alerts'])
           col2.metric("✅ Concordância", f"{summary['concordam']['percentual']:.1f}%")
           col3.metric("⚠️ Divergência", f"{summary['divergem']['percentual']:.1f}%")
           col4.metric("🔴 Reincidentes (Código)", summary['metricas_codigo']['total_reincidentes'])
           
-          # Detalhamento de concordância
           st.markdown("---")
           st.subheader("✅ Análise de Concordância")
           col1, col2, col3 = st.columns(3)
@@ -1171,7 +1463,6 @@ def show_comparison_module(cache_manager):
           col2.metric("✅ Ambos Não-Reincidentes", summary['concordam']['nao_reincidentes'])
           col3.metric("📊 Total Concordam", summary['concordam']['total'])
           
-          # Detalhamento de divergência
           st.markdown("---")
           st.subheader("⚠️ Análise de Divergência")
           col1, col2, col3 = st.columns(3)
@@ -1179,7 +1470,6 @@ def show_comparison_module(cache_manager):
           col2.metric("⚠️ Código NÃO / Athena SIM", summary['divergem']['code_nao_athena_sim'])
           col3.metric("📊 Total Divergem", summary['divergem']['total'])
           
-          # Presença nos datasets
           st.markdown("---")
           st.subheader("🔍 Presença nos Datasets")
           col1, col2, col3 = st.columns(3)
@@ -1187,14 +1477,12 @@ def show_comparison_module(cache_manager):
           col2.metric("🔵 Apenas Código", summary['presenca']['apenas_codigo'])
           col3.metric("🟡 Apenas Athena", summary['presenca']['apenas_athena'])
           
-          # Gráficos de comparação
           st.markdown("---")
           st.subheader("📊 Visualizações")
           
           col1, col2 = st.columns(2)
           
           with col1:
-            # Gráfico de pizza - concordância vs divergência
             fig_pie = go.Figure(data=[go.Pie(
               labels=['Concordam', 'Divergem'],
               values=[summary['concordam']['total'], summary['divergem']['total']],
@@ -1205,7 +1493,6 @@ def show_comparison_module(cache_manager):
             st.plotly_chart(fig_pie, use_container_width=True)
           
           with col2:
-            # Gráfico de barras - distribuição por status
             status_counts = df_comparison['status_comparacao'].value_counts()
             fig_bar = go.Figure(data=[go.Bar(
               x=status_counts.values,
@@ -1221,7 +1508,6 @@ def show_comparison_module(cache_manager):
             )
             st.plotly_chart(fig_bar, use_container_width=True)
           
-          # Tabela de casos divergentes
           st.markdown("---")
           st.subheader("⚠️ Casos Divergentes (Top 20)")
           divergent_cases = comparator.get_divergent_cases(limit=20)
@@ -1230,12 +1516,10 @@ def show_comparison_module(cache_manager):
           else:
             st.success("✅ Não há casos divergentes!")
           
-          # Tabela completa
           st.markdown("---")
           st.subheader("📋 Tabela Completa de Comparação")
           st.dataframe(df_comparison, use_container_width=True)
           
-          # Exportar resultados
           st.markdown("---")
           st.subheader("📥 Exportar Resultados")
           col1, col2 = st.columns(2)
@@ -1269,10 +1553,9 @@ def show_comparison_module(cache_manager):
 # MAIN
 # ============================================================
 def main():
-  st.title("🚨 Analisador de Alertas")
-  st.markdown("### 3 modos: Individual, Completa + CSV e Comparação")
+  st.title("🚨 Analisador de Alertas - Versão Completa Unificada")
+  st.markdown("### 3 modos: Individual, Completa + CSV e Comparação (Código vs Athena)")
   
-  # Inicializar cache manager
   cache_manager = get_cache_manager()
   
   st.sidebar.header("⚙️ Configurações")
@@ -1281,7 +1564,6 @@ def main():
     ["🔍 Individual", "📊 Completa + CSV", "🔄 Comparação (Código vs Athena)"]
   )
   
-  # Verificar cache disponível
   if cache_manager.has_cache() and analysis_mode != "🔄 Comparação (Código vs Athena)":
     cache_info = cache_manager.get_cache_info()
     if cache_info:
@@ -1306,7 +1588,6 @@ def main():
           if df_cached is not None:
             st.sidebar.success("✅ Dados carregados do cache!")
             
-            # Exibir resultados do cache
             st.header("📊 Resultados do Cache")
             st.info(f"Carregado de: {metadata.get('timestamp', 'N/A')}")
             
@@ -1349,12 +1630,10 @@ def main():
             
             return
   
-  # Modo de comparação
   if analysis_mode == "🔄 Comparação (Código vs Athena)":
     show_comparison_module(cache_manager)
     return
   
-  # Modos de análise normal
   uploaded_file = st.sidebar.file_uploader("📁 Upload CSV", type=['csv'])
 
   if uploaded_file:
@@ -1384,7 +1663,6 @@ def main():
           progress_bar.empty()
           
           if df_consolidated is not None and len(df_consolidated) > 0:
-            # Salvar no cache
             metadata = {
               'source_file': uploaded_file.name,
               'analysis_mode': 'Completa + CSV'
@@ -1428,29 +1706,24 @@ def main():
             )
   else:
     st.info("👆 Faça upload de um CSV")
-    with st.expander("📖 Instruções e Validação dos Critérios"):
+    with st.expander("📖 Instruções"):
       st.markdown("""
       ### ✅ CRITÉRIOS VALIDADOS
-
       1. **Regularidade (25%)** - Consistência via CV
       2. **Periodicidade (25%)** - Detecta ciclos via FFT
       3. **Previsibilidade (15%)** - Indica se podemos prever
       4. **Concentração Temporal (20%)** - Horários/dias fixos
       5. **Frequência Absoluta (15%)** - Volume mínimo necessário
       
-      ### 🔄 MODO COMPARAÇÃO
-      
-      Compare os resultados da análise do seu código com dados do Athena:
+      ### 🔄 COMPARAÇÃO COM ATHENA
       - Upload 2 CSVs: resultado da análise + dados do Athena
       - Identifica concordâncias e divergências
-      - Mostra alertas reincidentes em cada base
-      - Exporta relatório detalhado
+      - Exporta relatórios detalhados
       
       ### 💾 CACHE
-      
-      - Resultados salvos automaticamente após análise completa
-      - Reutilize análises sem reprocessar
-      - Limpe o cache quando necessário
+      - Resultados salvos automaticamente
+      - Reutilize sem reprocessar
+      - Limpe quando necessário
       """)
 
 
