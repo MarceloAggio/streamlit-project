@@ -167,9 +167,13 @@ class AlertComparator:
         # Preparar dados do código
         cols_to_use = ['u_alert_id', 'classification', 'score', 'total_occurrences']
         
-        # Adicionar colunas de clear se existirem
+        # Adicionar colunas opcionais se existirem
         if 'total_clears' in self.df_code.columns:
-            cols_to_use.extend(['total_clears', 'clear_percentage'])
+            cols_to_use.append('total_clears')
+        if 'clear_percentage' in self.df_code.columns:
+            cols_to_use.append('clear_percentage')
+        if 'priorities' in self.df_code.columns:
+            cols_to_use.append('priorities')
         
         df_code_prep = self.df_code[cols_to_use].copy()
         df_code_prep['is_reincident_code'] = df_code_prep['classification'].apply(self._is_reincident_code)
@@ -242,6 +246,7 @@ class AlertComparator:
             'classification',
             'score',
             'total_occurrences',
+            'priorities',
             'total_clears',
             'clear_percentage',
             'reincidence_count',
@@ -358,11 +363,12 @@ def get_cache_manager():
 
 
 # ----------------------------
-# Helpers para multiprocessing - COM CORREÇÃO CRÍTICA
+# Helpers para multiprocessing - COM CORREÇÃO CRÍTICA E PRIORIDADES
 # ----------------------------
 def analyze_single_u_alert_id_recurrence(u_alert_id, df_original):
     """
     CORREÇÃO CRÍTICA: SEMPRE retorna um dict válido, NUNCA None!
+    NOVA FEATURE: Agrega prioridades únicas em array
     """
     try:
         df_ci = df_original[df_original['u_alert_id'] == u_alert_id].copy()
@@ -376,6 +382,14 @@ def analyze_single_u_alert_id_recurrence(u_alert_id, df_original):
             total_clears = int(df_ci['clear'].sum())
             clear_percentage = float((total_clears / len(df_ci) * 100) if len(df_ci) > 0 else 0)
         
+        # NOVO: Agregar prioridades únicas
+        priorities_list = []
+        if 'priority' in df_ci.columns:
+            # Pegar todas as prioridades únicas, excluindo NaN
+            unique_priorities = df_ci['priority'].dropna().unique().tolist()
+            # Converter para string e ordenar
+            priorities_list = sorted([str(p) for p in unique_priorities])
+        
         if len(df_ci) < 3:
             return {
                 'u_alert_id': u_alert_id,
@@ -388,7 +402,8 @@ def analyze_single_u_alert_id_recurrence(u_alert_id, df_original):
                 'periodicity_detected': False,
                 'predictability_score': 0,
                 'total_clears': total_clears,
-                'clear_percentage': clear_percentage
+                'clear_percentage': clear_percentage,
+                'priorities': priorities_list  # NOVO
             }
 
         analyzer = AdvancedRecurrenceAnalyzer(df_ci, u_alert_id)
@@ -407,8 +422,12 @@ def analyze_single_u_alert_id_recurrence(u_alert_id, df_original):
                 'periodicity_detected': False,
                 'predictability_score': 0,
                 'total_clears': total_clears,
-                'clear_percentage': clear_percentage
+                'clear_percentage': clear_percentage,
+                'priorities': priorities_list  # NOVO
             }
+        
+        # Adicionar prioridades ao resultado
+        result['priorities'] = priorities_list
         
         return result
 
@@ -425,7 +444,8 @@ def analyze_single_u_alert_id_recurrence(u_alert_id, df_original):
             'periodicity_detected': False,
             'predictability_score': 0,
             'total_clears': 0,
-            'clear_percentage': 0.0
+            'clear_percentage': 0.0,
+            'priorities': []  # NOVO
         }
 
 
@@ -480,6 +500,13 @@ class AdvancedRecurrenceAnalyzer:
 
         st.info(f"📊 Analisando **{len(df)}** ocorrências do Short CI: **{self.alert_id}**")
         
+        # NOVO: Mostrar prioridades se disponível
+        if 'priority' in df.columns:
+            unique_priorities = df['priority'].dropna().unique()
+            if len(unique_priorities) > 0:
+                priorities_str = ', '.join(sorted([str(p) for p in unique_priorities]))
+                st.info(f"🎯 **Prioridades detectadas:** {priorities_str}")
+        
         # Mostrar estatísticas de Clear
         if 'clear' in df.columns:
             total_clears = int(df['clear'].sum())
@@ -533,6 +560,12 @@ class AdvancedRecurrenceAnalyzer:
         """
         df = self._prepare_data()
         
+        # NOVO: Agregar prioridades
+        priorities_list = []
+        if self.df is not None and 'priority' in self.df.columns:
+            unique_priorities = self.df['priority'].dropna().unique().tolist()
+            priorities_list = sorted([str(p) for p in unique_priorities])
+        
         # CORREÇÃO: Mesmo com dados insuficientes, retorna dict válido
         if df is None or len(df) < 3:
             df_basic = self.df if self.df is not None else None
@@ -560,7 +593,8 @@ class AdvancedRecurrenceAnalyzer:
                 'hourly_concentration': 0,
                 'daily_concentration': 0,
                 'total_clears': total_clears,
-                'clear_percentage': clear_percentage
+                'clear_percentage': clear_percentage,
+                'priorities': priorities_list  # NOVO
             }
         
         intervals_hours = df['time_diff_hours'].dropna().values
@@ -589,7 +623,8 @@ class AdvancedRecurrenceAnalyzer:
                 'hourly_concentration': 0,
                 'daily_concentration': 0,
                 'total_clears': total_clears,
-                'clear_percentage': clear_percentage
+                'clear_percentage': clear_percentage,
+                'priorities': priorities_list  # NOVO
             }
 
         results = {}
@@ -645,7 +680,8 @@ class AdvancedRecurrenceAnalyzer:
             'hourly_concentration': results['temporal'].get('hourly_concentration'),
             'daily_concentration': results['temporal'].get('daily_concentration'),
             'total_clears': total_clears,
-            'clear_percentage': clear_percentage
+            'clear_percentage': clear_percentage,
+            'priorities': priorities_list  # NOVO
         }
 
     # ----------------------------
@@ -1455,10 +1491,15 @@ class AdvancedRecurrenceAnalyzer:
             'n_bursts': results['bursts']['n_bursts'],
         }
         
-        # Adicionar info de clear se disponível
+        # Adicionar info de clear e prioridades se disponível
         if 'clear' in df.columns:
             export_data['total_clears'] = int(df['clear'].sum())
             export_data['clear_percentage'] = float((df['clear'].sum() / len(df) * 100) if len(df) > 0 else 0)
+        
+        # NOVO: Adicionar prioridades
+        if 'priority' in df.columns:
+            unique_priorities = df['priority'].dropna().unique()
+            export_data['priorities'] = ', '.join(sorted([str(p) for p in unique_priorities]))
         
         export_df = pd.DataFrame([export_data])
         csv = export_df.to_csv(index=False)
@@ -1494,6 +1535,12 @@ class StreamlitAlertAnalyzer:
             
             if 'clear' in df_raw.columns:
                 st.sidebar.success("✅ Coluna 'clear' detectada")
+            
+            # NOVO: Informar se há coluna de prioridade
+            if 'priority' in df_raw.columns:
+                st.sidebar.success("✅ Coluna 'priority' detectada")
+                unique_priorities = df_raw['priority'].dropna().nunique()
+                st.sidebar.info(f"📊 {unique_priorities} prioridades únicas encontradas")
             
             return True
         except Exception as e:
@@ -1823,11 +1870,11 @@ def show_comparison_module(cache_manager):
 
 
 # ============================================================
-# MAIN - COM TODOS OS 3 MODOS + CACHE
+# MAIN - COM TODOS OS 3 MODOS + CACHE + PRIORIDADES
 # ============================================================
 def main():
     st.title("🚨 Analisador de Alertas - VERSÃO COMPLETA 100%")
-    st.markdown("### ✅ Cache + Comparação + Processamento Garantido de 100% dos Alertas")
+    st.markdown("### ✅ Cache + Comparação + Prioridades (Array) + Processamento Garantido")
     
     cache_manager = get_cache_manager()
     
@@ -1901,7 +1948,7 @@ def main():
                             use_container_width=True
                         )
                         
-                        summary_cols = ['u_alert_id', 'score', 'classification', 'total_occurrences', 'clear_percentage']
+                        summary_cols = ['u_alert_id', 'score', 'classification', 'total_occurrences', 'priorities', 'clear_percentage']
                         available_summary = [col for col in summary_cols if col in df_cached.columns]
                         summary = df_cached[available_summary].copy()
                         csv_summary = summary.to_csv(index=False)
@@ -1942,7 +1989,7 @@ def main():
             elif analysis_mode == "📊 Completa + CSV":
                 st.subheader("📊 Análise Completa COM CRITÉRIOS VALIDADOS")
                 if st.sidebar.button("🚀 Executar", type="primary"):
-                    st.info("⏱️ Processando com validação de completude...")
+                    st.info("⏱️ Processando com validação de completude e agregação de prioridades...")
                     progress_bar = st.progress(0)
                     df_consolidated = analyzer.complete_analysis_all_u_alert_id(progress_bar)
                     progress_bar.empty()
@@ -1990,6 +2037,42 @@ def main():
 - **{total_0_clear}** alertas nunca foram encerrados por clear (requerem atenção)
                             """)
                         
+                        # NOVO: Estatísticas de Prioridades
+                        if 'priorities' in df_consolidated.columns:
+                            st.markdown("---")
+                            st.subheader("🎯 Distribuição de Prioridades")
+                            
+                            # Extrair todas as prioridades únicas
+                            all_priorities = []
+                            for priorities_list in df_consolidated['priorities']:
+                                if isinstance(priorities_list, list) and len(priorities_list) > 0:
+                                    all_priorities.extend(priorities_list)
+                            
+                            if all_priorities:
+                                priority_counts = Counter(all_priorities)
+                                priority_df = pd.DataFrame(priority_counts.items(), columns=['Prioridade', 'Contagem'])
+                                priority_df = priority_df.sort_values('Contagem', ascending=False)
+                                
+                                col1, col2 = st.columns([2, 1])
+                                with col1:
+                                    fig_priorities = go.Figure(data=[go.Bar(
+                                        x=priority_df['Prioridade'],
+                                        y=priority_df['Contagem'],
+                                        marker_color='lightblue'
+                                    )])
+                                    fig_priorities.update_layout(
+                                        title="Distribuição de Prioridades",
+                                        xaxis_title="Prioridade",
+                                        yaxis_title="Quantidade de Alertas",
+                                        height=400
+                                    )
+                                    st.plotly_chart(fig_priorities, use_container_width=True)
+                                
+                                with col2:
+                                    st.markdown("**📊 Top Prioridades:**")
+                                    for idx, row in priority_df.head(10).iterrows():
+                                        st.write(f"**{row['Prioridade']}**: {row['Contagem']} alertas")
+                        
                         st.subheader("Dataframe Completo")
                         st.dataframe(df_consolidated, use_container_width=True)
                         
@@ -2004,7 +2087,7 @@ def main():
                             "text/csv",
                             use_container_width=True
                         )
-                        summary_cols = ['u_alert_id', 'score', 'classification', 'total_occurrences', 'clear_percentage']
+                        summary_cols = ['u_alert_id', 'score', 'classification', 'total_occurrences', 'priorities', 'clear_percentage']
                         available_summary = [col for col in summary_cols if col in df_consolidated.columns]
                         summary = df_consolidated[available_summary].copy()
                         csv_summary = summary.to_csv(index=False)
@@ -2041,6 +2124,12 @@ def main():
             - Coluna 'clear' (0 ou 1) analisada automaticamente
             - Estatísticas de encerramento por alerta
             - Insights sobre % de clears
+            
+            ### 🎯 PRIORIDADES (ARRAY)
+            - Coluna 'priority' agregada automaticamente
+            - Um alerta pode ter múltiplas prioridades
+            - Sem duplicação de linhas
+            - Visualização e análise de distribuição
             
             ### ✅ GARANTIA DE PROCESSAMENTO
             - 100% dos alertas são processados
