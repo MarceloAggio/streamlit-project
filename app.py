@@ -13,10 +13,6 @@ import holidays
 from functools import partial
 from collections import Counter
 import math
-import os
-import json
-import pickle
-from pathlib import Path
 
 warnings.filterwarnings('ignore')
 
@@ -28,316 +24,27 @@ st.set_page_config(
 )
 
 
-# ============================================================
-# CACHE MANAGER - Gerenciamento de Cache
-# ============================================================
-class CacheManager:
-    """Gerencia cache de resultados de análise para evitar reprocessamento."""
-    
-    def __init__(self, cache_dir="cache"):
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(exist_ok=True)
-        self.analysis_cache_path = self.cache_dir / "analysis_results.pkl"
-        self.metadata_path = self.cache_dir / "metadata.json"
-    
-    def save_analysis_results(self, df_results, metadata=None):
-        """Salva resultados da análise completa em cache."""
-        try:
-            df_results.to_pickle(self.analysis_cache_path)
-            if metadata is None:
-                metadata = {}
-            metadata.update({
-                'timestamp': datetime.now().isoformat(),
-                'total_alerts': len(df_results),
-                'file_size': os.path.getsize(self.analysis_cache_path)
-            })
-            with open(self.metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-            return True
-        except Exception as e:
-            print(f"Erro ao salvar cache: {e}")
-            return False
-    
-    def load_analysis_results(self):
-        """Carrega resultados da análise do cache."""
-        try:
-            if not self.analysis_cache_path.exists():
-                return None, None
-            df_results = pd.read_pickle(self.analysis_cache_path)
-            metadata = {}
-            if self.metadata_path.exists():
-                with open(self.metadata_path, 'r') as f:
-                    metadata = json.load(f)
-            return df_results, metadata
-        except Exception as e:
-            print(f"Erro ao carregar cache: {e}")
-            return None, None
-    
-    def has_cache(self):
-        """Verifica se existe cache disponível."""
-        return self.analysis_cache_path.exists() and self.metadata_path.exists()
-    
-    def get_cache_info(self):
-        """Retorna informações sobre o cache existente."""
-        if not self.has_cache():
-            return None
-        try:
-            with open(self.metadata_path, 'r') as f:
-                metadata = json.load(f)
-            metadata['file_exists'] = self.analysis_cache_path.exists()
-            metadata['file_size_mb'] = os.path.getsize(self.analysis_cache_path) / (1024 * 1024)
-            return metadata
-        except Exception as e:
-            print(f"Erro ao obter info do cache: {e}")
-            return None
-    
-    def clear_cache(self):
-        """Limpa o cache existente."""
-        try:
-            if self.analysis_cache_path.exists():
-                os.remove(self.analysis_cache_path)
-            if self.metadata_path.exists():
-                os.remove(self.metadata_path)
-            return True
-        except Exception as e:
-            print(f"Erro ao limpar cache: {e}")
-            return False
-    
-    def save_comparison_results(self, comparison_data, filename="comparison_results.pkl"):
-        """Salva resultados de comparação em cache."""
-        try:
-            cache_path = self.cache_dir / filename
-            if isinstance(comparison_data, pd.DataFrame):
-                comparison_data.to_pickle(cache_path)
-            else:
-                with open(cache_path, 'wb') as f:
-                    pickle.dump(comparison_data, f)
-            return True
-        except Exception as e:
-            print(f"Erro ao salvar comparação: {e}")
-            return False
-    
-    def load_comparison_results(self, filename="comparison_results.pkl"):
-        """Carrega resultados de comparação do cache."""
-        try:
-            cache_path = self.cache_dir / filename
-            if not cache_path.exists():
-                return None
-            try:
-                return pd.read_pickle(cache_path)
-            except:
-                with open(cache_path, 'rb') as f:
-                    return pickle.load(f)
-        except Exception as e:
-            print(f"Erro ao carregar comparação: {e}")
-            return None
-
-
-# ============================================================
-# ALERT COMPARATOR - Comparação Código vs Athena
-# ============================================================
-class AlertComparator:
-    """Compara resultados de análise de reincidência entre o código local e o Athena."""
-    
-    def __init__(self, df_code_results, df_athena):
-        self.df_code = df_code_results.copy()
-        self.df_athena = df_athena.copy()
-        self.comparison_results = None
-    
-    def _is_reincident_code(self, classification):
-        """Verifica se a classificação do código indica reincidência."""
-        if pd.isna(classification):
-            return False
-        classification_str = str(classification).upper()
-        # R1 e R2 são considerados reincidentes
-        if 'CRÍTICO' in classification_str or 'R1' in classification_str:
-            return True
-        if 'PARCIALMENTE REINCIDENTE' in classification_str or 'R2' in classification_str:
-            return True
-        return False
-    
-    def _is_reincident_athena(self, u_symptom):
-        """Verifica se o Athena classifica como reincidência."""
-        if pd.isna(u_symptom):
-            return False
-        return 'reincidência' in str(u_symptom).lower() or 'reincidencia' in str(u_symptom).lower()
-    
-    def compare(self):
-        """Executa a comparação completa entre os dois datasets."""
-        # Preparar dados do código
-        df_code_prep = self.df_code[['u_alert_id', 'classification', 'score', 'total_occurrences']].copy()
-        df_code_prep['is_reincident_code'] = df_code_prep['classification'].apply(self._is_reincident_code)
-        
-        # Preparar dados do Athena - agrupar por u_alert_id
-        df_athena_grouped = self.df_athena.groupby('u_alert_id').agg({
-            'u_symptom': lambda x: list(x)
-        }).reset_index()
-        
-        df_athena_grouped['symptom_list'] = df_athena_grouped['u_symptom']
-        df_athena_grouped['has_reincidence'] = df_athena_grouped['symptom_list'].apply(
-            lambda symptoms: any(self._is_reincident_athena(s) for s in symptoms)
-        )
-        df_athena_grouped['reincidence_count'] = df_athena_grouped['symptom_list'].apply(
-            lambda symptoms: sum(1 for s in symptoms if self._is_reincident_athena(s))
-        )
-        df_athena_grouped['total_athena_records'] = df_athena_grouped['symptom_list'].apply(len)
-        
-        # Merge dos datasets
-        comparison = pd.merge(
-            df_code_prep,
-            df_athena_grouped[['u_alert_id', 'has_reincidence', 'reincidence_count', 'total_athena_records']],
-            on='u_alert_id',
-            how='outer',
-            indicator=True
-        )
-        
-        comparison.rename(columns={'has_reincidence': 'is_reincident_athena'}, inplace=True)
-        
-        # Preencher NaN
-        comparison['is_reincident_code'] = comparison['is_reincident_code'].fillna(False)
-        comparison['is_reincident_athena'] = comparison['is_reincident_athena'].fillna(False)
-        
-        # Criar categorias de comparação
-        def categorize_match(row):
-            code_r = row['is_reincident_code']
-            athena_r = row['is_reincident_athena']
-            if code_r and athena_r:
-                return '✅ CONCORDAM - Ambos Reincidentes'
-            elif not code_r and not athena_r:
-                return '✅ CONCORDAM - Ambos Não-Reincidentes'
-            elif code_r and not athena_r:
-                return '⚠️ DIVERGEM - Código diz SIM, Athena diz NÃO'
-            elif not code_r and athena_r:
-                return '⚠️ DIVERGEM - Código diz NÃO, Athena diz SIM'
-            else:
-                return '❓ INDETERMINADO'
-        
-        comparison['status_comparacao'] = comparison.apply(categorize_match, axis=1)
-        
-        # Adicionar informação sobre presença nos datasets
-        def get_presence(merge_indicator):
-            if merge_indicator == 'both':
-                return '🟢 Ambos Datasets'
-            elif merge_indicator == 'left_only':
-                return '🔵 Apenas Código'
-            else:
-                return '🟡 Apenas Athena'
-        
-        comparison['presenca'] = comparison['_merge'].apply(get_presence)
-        comparison = comparison.drop('_merge', axis=1)
-        
-        # Reordenar colunas
-        cols_order = [
-            'u_alert_id',
-            'status_comparacao',
-            'presenca',
-            'is_reincident_code',
-            'is_reincident_athena',
-            'classification',
-            'score',
-            'total_occurrences',
-            'reincidence_count',
-            'total_athena_records'
-        ]
-        cols_order = [col for col in cols_order if col in comparison.columns]
-        comparison = comparison[cols_order]
-        
-        self.comparison_results = comparison
-        return comparison
-    
-    def get_summary_statistics(self):
-        """Retorna estatísticas resumidas da comparação."""
-        if self.comparison_results is None:
-            self.compare()
-        
-        df = self.comparison_results
-        total_alerts = len(df)
-        
-        # Contagens por categoria
-        concordam_reincidentes = len(df[df['status_comparacao'] == '✅ CONCORDAM - Ambos Reincidentes'])
-        concordam_nao_reincidentes = len(df[df['status_comparacao'] == '✅ CONCORDAM - Ambos Não-Reincidentes'])
-        divergem_code_sim = len(df[df['status_comparacao'] == '⚠️ DIVERGEM - Código diz SIM, Athena diz NÃO'])
-        divergem_code_nao = len(df[df['status_comparacao'] == '⚠️ DIVERGEM - Código diz NÃO, Athena diz SIM'])
-        
-        total_concordam = concordam_reincidentes + concordam_nao_reincidentes
-        total_divergem = divergem_code_sim + divergem_code_nao
-        taxa_concordancia = (total_concordam / total_alerts * 100) if total_alerts > 0 else 0
-        
-        apenas_codigo = len(df[df['presenca'] == '🔵 Apenas Código'])
-        apenas_athena = len(df[df['presenca'] == '🟡 Apenas Athena'])
-        ambos = len(df[df['presenca'] == '🟢 Ambos Datasets'])
-        
-        return {
-            'total_alerts': total_alerts,
-            'concordam': {
-                'total': total_concordam,
-                'reincidentes': concordam_reincidentes,
-                'nao_reincidentes': concordam_nao_reincidentes,
-                'percentual': taxa_concordancia
-            },
-            'divergem': {
-                'total': total_divergem,
-                'code_sim_athena_nao': divergem_code_sim,
-                'code_nao_athena_sim': divergem_code_nao,
-                'percentual': (total_divergem / total_alerts * 100) if total_alerts > 0 else 0
-            },
-            'presenca': {
-                'ambos': ambos,
-                'apenas_codigo': apenas_codigo,
-                'apenas_athena': apenas_athena
-            },
-            'metricas_codigo': {
-                'total_reincidentes': int(df['is_reincident_code'].sum()),
-                'percentual_reincidentes': (df['is_reincident_code'].sum() / total_alerts * 100) if total_alerts > 0 else 0
-            },
-            'metricas_athena': {
-                'total_reincidentes': int(df['is_reincident_athena'].sum()),
-                'percentual_reincidentes': (df['is_reincident_athena'].sum() / total_alerts * 100) if total_alerts > 0 else 0
-            }
-        }
-    
-    def get_divergent_cases(self, limit=None):
-        """Retorna casos onde há divergência entre código e Athena."""
-        if self.comparison_results is None:
-            self.compare()
-        
-        divergent = self.comparison_results[
-            self.comparison_results['status_comparacao'].str.contains('DIVERGEM', na=False)
-        ].copy()
-        
-        if limit:
-            divergent = divergent.head(limit)
-        
-        return divergent
-    
-    def export_comparison_report(self, output_path=None):
-        """Exporta relatório completo da comparação."""
-        if self.comparison_results is None:
-            self.compare()
-        
-        if output_path:
-            self.comparison_results.to_csv(output_path, index=False)
-            return output_path
-        else:
-            return self.comparison_results.to_csv(index=False)
-
-
-# Inicializar cache manager
-@st.cache_resource
-def get_cache_manager():
-    return CacheManager()
-
-
 # ----------------------------
 # Helpers para multiprocessing
 # ----------------------------
 def analyze_single_u_alert_id_recurrence(u_alert_id, df_original):
+    """
+    CRÍTICO: Esta função SEMPRE deve retornar um dict, NUNCA None!
+    """
     try:
         df_ci = df_original[df_original['u_alert_id'] == u_alert_id].copy()
         df_ci['created_on'] = pd.to_datetime(df_ci['created_on'], errors='coerce')
         df_ci = df_ci.dropna(subset=['created_on']).sort_values('created_on')
 
+        # CORREÇÃO: Sempre retorna dict, mesmo com dados insuficientes
         if len(df_ci) < 3:
+            # Calcular clears se disponível
+            total_clears = 0
+            clear_percentage = 0.0
+            if 'clear' in df_ci.columns:
+                total_clears = int(df_ci['clear'].sum())
+                clear_percentage = float((total_clears / len(df_ci) * 100) if len(df_ci) > 0 else 0)
+            
             return {
                 'u_alert_id': u_alert_id,
                 'total_occurrences': len(df_ci),
@@ -347,13 +54,35 @@ def analyze_single_u_alert_id_recurrence(u_alert_id, df_original):
                 'cv': None,
                 'regularity_score': 0,
                 'periodicity_detected': False,
-                'predictability_score': 0
+                'predictability_score': 0,
+                'total_clears': total_clears,
+                'clear_percentage': clear_percentage
             }
 
         analyzer = AdvancedRecurrenceAnalyzer(df_ci, u_alert_id)
-        return analyzer.analyze_complete_silent()
+        result = analyzer.analyze_complete_silent()
+        
+        # GARANTIA: Se por algum motivo retornar None, criar dict padrão
+        if result is None:
+            return {
+                'u_alert_id': u_alert_id,
+                'total_occurrences': len(df_ci),
+                'score': 0,
+                'classification': '⚪ ERRO NA ANÁLISE',
+                'mean_interval_hours': None,
+                'cv': None,
+                'regularity_score': 0,
+                'periodicity_detected': False,
+                'predictability_score': 0,
+                'total_clears': 0,
+                'clear_percentage': 0.0
+            }
+        
+        return result
 
     except Exception as e:
+        # ERRO: Ainda assim retorna dict para não perder o alerta
+        print(f"ERRO ao processar {u_alert_id}: {e}")
         return {
             'u_alert_id': u_alert_id,
             'total_occurrences': 0,
@@ -363,16 +92,21 @@ def analyze_single_u_alert_id_recurrence(u_alert_id, df_original):
             'cv': None,
             'regularity_score': 0,
             'periodicity_detected': False,
-            'predictability_score': 0
+            'predictability_score': 0,
+            'total_clears': 0,
+            'clear_percentage': 0.0
         }
 
 
 def analyze_chunk_recurrence(u_alert_id_list, df_original):
+    """
+    CORREÇÃO: Não filtra resultados, adiciona TODOS
+    """
     results = []
     for u_alert_id in u_alert_id_list:
         result = analyze_single_u_alert_id_recurrence(u_alert_id, df_original)
-        if result:
-            results.append(result)
+        # SEMPRE adiciona, pois result nunca é None agora
+        results.append(result)
     return results
 
 
@@ -414,6 +148,26 @@ class AdvancedRecurrenceAnalyzer:
             return
 
         st.info(f"📊 Analisando **{len(df)}** ocorrências do Short CI: **{self.alert_id}**")
+        
+        # Mostrar estatísticas de Clear
+        if 'clear' in df.columns:
+            total_clears = int(df['clear'].sum())
+            clear_percentage = (total_clears / len(df) * 100) if len(df) > 0 else 0
+            
+            st.markdown("---")
+            st.subheader("🔒 Análise de Encerramento (Clear)")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total de Clears", total_clears)
+            col2.metric("% Encerrado por Clear", f"{clear_percentage:.1f}%")
+            col3.metric("% Sem Clear", f"{100 - clear_percentage:.1f}%")
+            
+            if clear_percentage == 100:
+                st.success("✅ Todos os incidentes foram encerrados por clear!")
+            elif clear_percentage == 0:
+                st.error("❌ Nenhum incidente foi encerrado por clear")
+            else:
+                st.info(f"📊 {clear_percentage:.1f}% dos incidentes foram encerrados por clear e {100 - clear_percentage:.1f}% não foram")
+        
         intervals_hours = df['time_diff_hours'].dropna().values
         if len(intervals_hours) < 2:
             st.warning("⚠️ Intervalos insuficientes.")
@@ -443,13 +197,71 @@ class AdvancedRecurrenceAnalyzer:
         self._final_classification(results, df, intervals_hours)
 
     def analyze_complete_silent(self):
-        """Modo silencioso para batch: retorna dict resumo"""
+        """
+        CORREÇÃO CRÍTICA: SEMPRE retorna dict, NUNCA None!
+        """
         df = self._prepare_data()
+        
+        # CORREÇÃO: Mesmo com dados insuficientes, retorna dict válido
         if df is None or len(df) < 3:
-            return None
+            # Tentar pegar dados básicos mesmo assim
+            df_basic = self.df if self.df is not None else None
+            total_occ = len(df_basic) if df_basic is not None else 0
+            
+            # Calcular clears se disponível
+            total_clears = 0
+            clear_percentage = 0.0
+            if df_basic is not None and 'clear' in df_basic.columns:
+                total_clears = int(df_basic['clear'].sum())
+                clear_percentage = float((total_clears / total_occ * 100) if total_occ > 0 else 0)
+            
+            return {
+                'u_alert_id': self.alert_id,
+                'total_occurrences': total_occ,
+                'score': 0,
+                'classification': '⚪ DADOS INSUFICIENTES',
+                'mean_interval_hours': None,
+                'median_interval_hours': None,
+                'cv': None,
+                'regularity_score': 0,
+                'periodicity_detected': False,
+                'dominant_period_hours': None,
+                'predictability_score': 0,
+                'next_occurrence_prediction_hours': None,
+                'hourly_concentration': 0,
+                'daily_concentration': 0,
+                'total_clears': total_clears,
+                'clear_percentage': clear_percentage
+            }
+        
         intervals_hours = df['time_diff_hours'].dropna().values
+        
+        # CORREÇÃO: Se não há intervalos suficientes, ainda retorna dict válido
         if len(intervals_hours) < 2:
-            return None
+            total_clears = 0
+            clear_percentage = 0.0
+            if 'clear' in df.columns:
+                total_clears = int(df['clear'].sum())
+                clear_percentage = float((total_clears / len(df) * 100) if len(df) > 0 else 0)
+            
+            return {
+                'u_alert_id': self.alert_id,
+                'total_occurrences': len(df),
+                'score': 0,
+                'classification': '⚪ INTERVALOS INSUFICIENTES',
+                'mean_interval_hours': None,
+                'median_interval_hours': None,
+                'cv': None,
+                'regularity_score': 0,
+                'periodicity_detected': False,
+                'dominant_period_hours': None,
+                'predictability_score': 0,
+                'next_occurrence_prediction_hours': None,
+                'hourly_concentration': 0,
+                'daily_concentration': 0,
+                'total_clears': total_clears,
+                'clear_percentage': clear_percentage
+            }
 
         results = {}
         # executar análises com render=False (silencioso)
@@ -478,6 +290,13 @@ class AdvancedRecurrenceAnalyzer:
         except Exception:
             results['temporal'] = {'hourly_concentration': 0, 'daily_concentration': 0, 'peak_hours': [], 'peak_days': []}
 
+        # Calcular estatísticas de Clear
+        total_clears = 0
+        clear_percentage = 0.0
+        if 'clear' in df.columns:
+            total_clears = int(df['clear'].sum())
+            clear_percentage = float((total_clears / len(df) * 100) if len(df) > 0 else 0)
+
         # calcular score final
         final_score, classification = self._calculate_final_score_validated(results, df, intervals_hours)
 
@@ -496,6 +315,8 @@ class AdvancedRecurrenceAnalyzer:
             'next_occurrence_prediction_hours': results['predictability'].get('next_expected_hours'),
             'hourly_concentration': results['temporal'].get('hourly_concentration'),
             'daily_concentration': results['temporal'].get('daily_concentration'),
+            'total_clears': total_clears,
+            'clear_percentage': clear_percentage
         }
 
     # ----------------------------
@@ -661,6 +482,7 @@ class AdvancedRecurrenceAnalyzer:
             'has_moderate_periodicity': has_moderate_periodicity,
             'dominant_period_hours': dominant_period_hours
         }
+    
     def _analyze_autocorrelation(self, intervals, render=True):
         if len(intervals) < 5:
             if render:
@@ -1307,6 +1129,12 @@ class AdvancedRecurrenceAnalyzer:
             'bursts_detected': results['bursts']['has_bursts'],
             'n_bursts': results['bursts']['n_bursts'],
         }
+        
+        # Adicionar info de clear se disponível
+        if 'clear' in df.columns:
+            export_data['total_clears'] = int(df['clear'].sum())
+            export_data['clear_percentage'] = float((df['clear'].sum() / len(df) * 100) if len(df) > 0 else 0)
+        
         export_df = pd.DataFrame([export_data])
         csv = export_df.to_csv(index=False)
         st.download_button("⬇️ Exportar Relatório Completo", csv, f"reincidencia_{self.alert_id}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", "text/csv", use_container_width=True)
@@ -1335,7 +1163,15 @@ class StreamlitAlertAnalyzer:
             df_raw['created_on'] = pd.to_datetime(df_raw['created_on'])
             df_raw = df_raw.dropna(subset=['created_on']).sort_values(['u_alert_id', 'created_on']).reset_index(drop=True)
             self.df_original = df_raw
-            st.sidebar.write(f"**IDs:** {len(df_raw['u_alert_id'].unique())}")
+            
+            # Mostrar info detalhada
+            unique_alerts = len(df_raw['u_alert_id'].unique())
+            st.sidebar.write(f"**Total de Alertas Únicos:** {unique_alerts}")
+            
+            # Verificar se tem coluna clear
+            if 'clear' in df_raw.columns:
+                st.sidebar.success("✅ Coluna 'clear' detectada")
+            
             return True
         except Exception as e:
             st.error(f"❌ Erro: {e}")
@@ -1358,20 +1194,26 @@ class StreamlitAlertAnalyzer:
         return True
 
     def complete_analysis_all_u_alert_id(self, progress_bar=None):
+        """
+        CORREÇÃO: Garantir que TODOS os alertas sejam processados
+        """
         try:
             if self.df_original is None or len(self.df_original) == 0:
                 st.error("❌ Dados não carregados")
                 return None
 
             u_alert_id_list = list(self.df_original['u_alert_id'].unique())
-            total = len(u_alert_id_list)
-            use_mp = total > 20
+            total_expected = len(u_alert_id_list)
+            
+            st.info(f"🎯 **Total de alertas a processar: {total_expected}**")
+            
+            use_mp = total_expected > 20
 
             if use_mp:
-                n_processes = min(cpu_count(), total, 8)
-                st.info(f"🚀 Usando {n_processes} processos para {total} alertas")
-                chunk_size = max(1, total // n_processes)
-                chunks = [u_alert_id_list[i:i + chunk_size] for i in range(0, total, chunk_size)]
+                n_processes = min(cpu_count(), total_expected, 8)
+                st.info(f"🚀 Usando {n_processes} processos para {total_expected} alertas")
+                chunk_size = max(1, total_expected // n_processes)
+                chunks = [u_alert_id_list[i:i + chunk_size] for i in range(0, total_expected, chunk_size)]
                 process_func = partial(analyze_chunk_recurrence, df_original=self.df_original)
 
                 try:
@@ -1380,12 +1222,30 @@ class StreamlitAlertAnalyzer:
                         for idx, chunk_results in enumerate(pool.imap(process_func, chunks)):
                             all_results.extend(chunk_results)
                             if progress_bar:
-                                progress = (len(all_results) / total)
-                                progress_bar.progress(progress, text=f"{len(all_results)}/{total}")
+                                progress = (len(all_results) / total_expected)
+                                progress_bar.progress(progress, text=f"✅ {len(all_results)}/{total_expected}")
+                    
+                    # VALIDAÇÃO CRÍTICA
+                    total_processed = len(all_results)
+                    if total_processed != total_expected:
+                        st.error(f"⚠️ ATENÇÃO: Esperado {total_expected} alertas, processado {total_processed}!")
+                        st.error(f"❌ FALTAM {total_expected - total_processed} alertas!")
+                    else:
+                        st.success(f"✅ TODOS os {total_processed} alertas foram processados com sucesso!")
+                    
                     df_results = pd.DataFrame(all_results)
 
+                    # Adicionar priority se existir
+                    if 'priority' in self.df_original.columns:
+                        df_results = df_results.merge(
+                            self.df_original[['u_alert_id', 'priority']].drop_duplicates(), 
+                            on='u_alert_id', 
+                            how='left'
+                        )
+
                     if progress_bar:
-                        progress_bar.progress(1.0, text="✅ Completa!")
+                        progress_bar.progress(1.0, text=f"✅ Completa! {total_processed}/{total_expected}")
+                    
                     return df_results
 
                 except Exception as e:
@@ -1393,18 +1253,38 @@ class StreamlitAlertAnalyzer:
                     use_mp = False
 
             if not use_mp:
+                st.info("🔄 Processando em modo sequencial...")
                 all_results = []
                 for idx, u_alert_id in enumerate(u_alert_id_list):
                     if progress_bar:
-                        progress_bar.progress((idx + 1) / total, text=f"{idx + 1}/{total}")
+                        progress_bar.progress((idx + 1) / total_expected, text=f"✅ {idx + 1}/{total_expected}")
+                    
                     result = analyze_single_u_alert_id_recurrence(u_alert_id, self.df_original)
-                    if result:
-                        all_results.append(result)
+                    # SEMPRE adiciona o resultado (nunca é None agora)
+                    all_results.append(result)
+                
+                # VALIDAÇÃO CRÍTICA
+                total_processed = len(all_results)
+                if total_processed != total_expected:
+                    st.error(f"⚠️ ATENÇÃO: Esperado {total_expected} alertas, processado {total_processed}!")
+                    st.error(f"❌ FALTAM {total_expected - total_processed} alertas!")
+                else:
+                    st.success(f"✅ TODOS os {total_processed} alertas foram processados com sucesso!")
+                
+                df_results = pd.DataFrame(all_results)
 
-                return pd.DataFrame(all_results)
+                # Adicionar priority se existir
+                if 'priority' in self.df_original.columns:
+                    df_results = df_results.merge(
+                        self.df_original[['u_alert_id', 'priority']].drop_duplicates(), 
+                        on='u_alert_id', 
+                        how='left'
+                    )
+
+                return df_results
 
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"❌ Erro: {e}")
             import traceback
             st.error(traceback.format_exc())
             return None
@@ -1446,244 +1326,13 @@ class StreamlitAlertAnalyzer:
 
 
 # ============================================================
-# COMPARAÇÃO DE CSVs
-# ============================================================
-def show_comparison_module(cache_manager):
-    """Módulo de comparação entre CSV do código e CSV do Athena"""
-    st.header("🔄 Comparação: Código vs Athena")
-    st.markdown("Compare os resultados de reincidência entre seu código e os dados do Athena")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("📤 CSV do Código (Análise)")
-        uploaded_code = st.file_uploader(
-            "Upload CSV com resultados da análise",
-            type=['csv'],
-            key='code_csv',
-            help="CSV gerado pela análise completa com colunas: u_alert_id, classification, score, etc."
-        )
-    
-    with col2:
-        st.subheader("📥 CSV do Athena")
-        uploaded_athena = st.file_uploader(
-            "Upload CSV do Athena",
-            type=['csv'],
-            key='athena_csv',
-            help="CSV do Athena com colunas: u_alert_id, u_symptom (contendo 'Reincidência')"
-        )
-    
-    if uploaded_code and uploaded_athena:
-        try:
-            df_code = pd.read_csv(uploaded_code)
-            df_athena = pd.read_csv(uploaded_athena)
-            
-            st.success(f"✅ CSV Código: {len(df_code)} registros | CSV Athena: {len(df_athena)} registros")
-            
-            if 'u_alert_id' not in df_code.columns or 'classification' not in df_code.columns:
-                st.error("❌ CSV do Código deve conter: 'u_alert_id' e 'classification'")
-                return
-            
-            if 'u_alert_id' not in df_athena.columns or 'u_symptom' not in df_athena.columns:
-                st.error("❌ CSV do Athena deve conter: 'u_alert_id' e 'u_symptom'")
-                return
-            
-            if st.button("🚀 Executar Comparação", type="primary", use_container_width=True):
-                with st.spinner("Comparando dados..."):
-                    comparator = AlertComparator(df_code, df_athena)
-                    df_comparison = comparator.compare()
-                    summary = comparator.get_summary_statistics()
-                    
-                    cache_manager.save_comparison_results(df_comparison)
-                    
-                    st.markdown("---")
-                    st.header("📊 Resultados da Comparação")
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("📋 Total de Alertas", summary['total_alerts'])
-                    col2.metric("✅ Concordância", f"{summary['concordam']['percentual']:.1f}%")
-                    col3.metric("⚠️ Divergência", f"{summary['divergem']['percentual']:.1f}%")
-                    col4.metric("🔴 Reincidentes (Código)", summary['metricas_codigo']['total_reincidentes'])
-                    
-                    st.markdown("---")
-                    st.subheader("✅ Análise de Concordância")
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("✅ Ambos Reincidentes", summary['concordam']['reincidentes'])
-                    col2.metric("✅ Ambos Não-Reincidentes", summary['concordam']['nao_reincidentes'])
-                    col3.metric("📊 Total Concordam", summary['concordam']['total'])
-                    
-                    st.markdown("---")
-                    st.subheader("⚠️ Análise de Divergência")
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("⚠️ Código SIM / Athena NÃO", summary['divergem']['code_sim_athena_nao'])
-                    col2.metric("⚠️ Código NÃO / Athena SIM", summary['divergem']['code_nao_athena_sim'])
-                    col3.metric("📊 Total Divergem", summary['divergem']['total'])
-                    
-                    st.markdown("---")
-                    st.subheader("🔍 Presença nos Datasets")
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("🟢 Ambos Datasets", summary['presenca']['ambos'])
-                    col2.metric("🔵 Apenas Código", summary['presenca']['apenas_codigo'])
-                    col3.metric("🟡 Apenas Athena", summary['presenca']['apenas_athena'])
-                    
-                    st.markdown("---")
-                    st.subheader("📊 Visualizações")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        fig_pie = go.Figure(data=[go.Pie(
-                            labels=['Concordam', 'Divergem'],
-                            values=[summary['concordam']['total'], summary['divergem']['total']],
-                            marker=dict(colors=['#2ecc71', '#e74c3c']),
-                            hole=0.3
-                        )])
-                        fig_pie.update_layout(title="Concordância vs Divergência", height=350)
-                        st.plotly_chart(fig_pie, use_container_width=True)
-                    
-                    with col2:
-                        status_counts = df_comparison['status_comparacao'].value_counts()
-                        fig_bar = go.Figure(data=[go.Bar(
-                            x=status_counts.values,
-                            y=status_counts.index,
-                            orientation='h',
-                            marker=dict(color=['#2ecc71' if 'CONCORDAM' in str(x) else '#e74c3c' 
-                                             for x in status_counts.index])
-                        )])
-                        fig_bar.update_layout(
-                            title="Distribuição por Status",
-                            height=350,
-                            yaxis_title="Status",
-                            xaxis_title="Quantidade"
-                        )
-                        st.plotly_chart(fig_bar, use_container_width=True)
-                    
-                    st.markdown("---")
-                    st.subheader("⚠️ Casos Divergentes (Top 20)")
-                    divergent_cases = comparator.get_divergent_cases(limit=20)
-                    if len(divergent_cases) > 0:
-                        st.dataframe(divergent_cases, use_container_width=True)
-                    else:
-                        st.success("✅ Não há casos divergentes!")
-                    
-                    st.markdown("---")
-                    st.subheader("📋 Tabela Completa de Comparação")
-                    st.dataframe(df_comparison, use_container_width=True)
-                    
-                    st.markdown("---")
-                    st.subheader("📥 Exportar Resultados")
-                    col1, col2 = st.columns(2)
-                    
-                    csv_complete = df_comparison.to_csv(index=False)
-                    col1.download_button(
-                        "⬇️ CSV Completo",
-                        csv_complete,
-                        f"comparacao_completa_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                        "text/csv",
-                        use_container_width=True
-                    )
-                    
-                    csv_divergent = divergent_cases.to_csv(index=False) if len(divergent_cases) > 0 else "Sem divergências"
-                    col2.download_button(
-                        "⬇️ CSV Apenas Divergentes",
-                        csv_divergent,
-                        f"comparacao_divergentes_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                        "text/csv",
-                        use_container_width=True,
-                        disabled=len(divergent_cases) == 0
-                    )
-        
-        except Exception as e:
-            st.error(f"❌ Erro ao processar arquivos: {e}")
-            import traceback
-            st.error(traceback.format_exc())
-
-
-# ============================================================
 # MAIN
 # ============================================================
 def main():
-    st.title("🚨 Analisador de Alertas")
-    st.markdown("### 3 modos: Individual, Completa + CSV e Comparação (Código vs Athena)")
-    
-    cache_manager = get_cache_manager()
-    
+    st.title("🚨 Analisador de Alertas - VERSÃO CORRIGIDA")
+    st.markdown("### ✅ GARANTIA: Processa TODOS os alertas (100%)")
     st.sidebar.header("⚙️ Configurações")
-    analysis_mode = st.sidebar.selectbox(
-        "🎯 Modo de Análise", 
-        ["🔍 Individual", "📊 Completa + CSV", "🔄 Comparação (Código vs Athena)"]
-    )
-    
-    # Mostrar opções de cache se houver cache disponível e não for modo de comparação
-    if cache_manager.has_cache() and analysis_mode != "🔄 Comparação (Código vs Athena)":
-        cache_info = cache_manager.get_cache_info()
-        if cache_info:
-            with st.sidebar.expander("💾 Cache Disponível", expanded=True):
-                st.info(f"""**Data:** {cache_info.get('timestamp', 'N/A')}
-**Alertas:** {cache_info.get('total_alerts', 'N/A')}
-**Tamanho:** {cache_info.get('file_size_mb', 0):.2f} MB""")
-                
-                col1, col2 = st.columns(2)
-                use_cache = col1.button("✅ Usar Cache", type="primary", use_container_width=True)
-                clear_cache = col2.button("🗑️ Limpar", use_container_width=True)
-                
-                if clear_cache:
-                    if cache_manager.clear_cache():
-                        st.success("Cache limpo!")
-                        st.rerun()
-                
-                if use_cache:
-                    df_cached, metadata = cache_manager.load_analysis_results()
-                    if df_cached is not None:
-                        st.sidebar.success("✅ Dados carregados do cache!")
-                        
-                        st.header("📊 Resultados do Cache")
-                        st.info(f"Carregado de: {metadata.get('timestamp', 'N/A')}")
-                        
-                        col1, col2, col3, col4 = st.columns(4)
-                        critical = len(df_cached[df_cached['classification'].str.contains('CRÍTICO', na=False)])
-                        col1.metric("🔴 R1", critical)
-                        high = len(df_cached[df_cached['classification'].str.contains('PARCIALMENTE', na=False)])
-                        col2.metric("🟠 R2", high)
-                        medium = len(df_cached[df_cached['classification'].str.contains('DETECTÁVEL', na=False)])
-                        col3.metric("🟡 R3", medium)
-                        low = len(df_cached[df_cached['classification'].str.contains('NÃO', na=False)])
-                        col4.metric("🟢 R4", low)
-                        
-                        st.subheader("Dataframe Completo")
-                        st.dataframe(df_cached, use_container_width=True)
-                        
-                        st.markdown("---")
-                        st.subheader("📥 Exportar")
-                        col1, col2 = st.columns(2)
-                        
-                        csv_full = df_cached.to_csv(index=False)
-                        col1.download_button(
-                            "⬇️ CSV Completo",
-                            csv_full,
-                            f"completo_cache_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                            "text/csv",
-                            use_container_width=True
-                        )
-                        
-                        summary_cols = ['u_alert_id', 'score', 'classification', 'total_occurrences']
-                        available_summary = [col for col in summary_cols if col in df_cached.columns]
-                        summary = df_cached[available_summary].copy()
-                        csv_summary = summary.to_csv(index=False)
-                        col2.download_button(
-                            "⬇️ CSV Resumido",
-                            csv_summary,
-                            f"resumo_cache_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                            "text/csv",
-                            use_container_width=True
-                        )
-                        return
-    
-    # Modo de comparação
-    if analysis_mode == "🔄 Comparação (Código vs Athena)":
-        show_comparison_module(cache_manager)
-        return
-    
+    analysis_mode = st.sidebar.selectbox("🎯 Modo de Análise", ["🔍 Individual", "📊 Completa + CSV"])
     uploaded_file = st.sidebar.file_uploader("📁 Upload CSV", type=['csv'])
 
     if uploaded_file:
@@ -1705,22 +1354,18 @@ def main():
                             recurrence_analyzer.analyze()
 
             elif analysis_mode == "📊 Completa + CSV":
+                if 'batch_results' in st.session_state:
+                    st.header("📑 Resumo Consolidado (Resultados Anteriores)")
+                    st.dataframe(st.session_state['batch_results'], use_container_width=True)
+
                 st.subheader("📊 Análise Completa COM CRITÉRIOS VALIDADOS")
                 if st.sidebar.button("🚀 Executar", type="primary"):
-                    st.info("⏱️ Processando com multiprocessing...")
+                    st.info("⏱️ Processando com validação de completude...")
                     progress_bar = st.progress(0)
                     df_consolidated = analyzer.complete_analysis_all_u_alert_id(progress_bar)
                     progress_bar.empty()
                     
                     if df_consolidated is not None and len(df_consolidated) > 0:
-                        # Salvar no cache
-                        metadata = {
-                            'source_file': uploaded_file.name,
-                            'analysis_mode': 'Completa + CSV'
-                        }
-                        cache_manager.save_analysis_results(df_consolidated, metadata)
-                        
-                        st.success(f"✅ {len(df_consolidated)} alertas processados e salvos no cache!")
                         st.header("📊 Resumo")
                         col1, col2, col3, col4 = st.columns(4)
                         critical = len(df_consolidated[df_consolidated['classification'].str.contains('R1', na=False)])
@@ -1732,31 +1377,35 @@ def main():
                         low = len(df_consolidated[df_consolidated['classification'].str.contains('R4', na=False)])
                         col4.metric("🟢 R4", low)
                         
+                        # Mostrar estatísticas de Clear se disponível
+                        if 'clear_percentage' in df_consolidated.columns:
+                            st.markdown("---")
+                            st.subheader("🔒 Estatísticas Gerais de Clear")
+                            col1, col2, col3, col4 = st.columns(4)
+                            avg_clear = df_consolidated['clear_percentage'].mean()
+                            total_100_clear = (df_consolidated['clear_percentage'] == 100).sum()
+                            total_0_clear = (df_consolidated['clear_percentage'] == 0).sum()
+                            total_partial = ((df_consolidated['clear_percentage'] > 0) & (df_consolidated['clear_percentage'] < 100)).sum()
+                            
+                            col1.metric("📊 Média de Clear", f"{avg_clear:.1f}%")
+                            col2.metric("✅ 100% Clear", total_100_clear)
+                            col3.metric("🟡 Clear Parcial", total_partial)
+                            col4.metric("❌ 0% Clear", total_0_clear)
+                        
                         st.subheader("Dataframe Completo")
                         st.dataframe(df_consolidated, use_container_width=True)
+                        st.session_state['batch_results'] = df_consolidated
                         
                         st.markdown("---")
                         st.subheader("📥 Exportar")
                         col1, col2 = st.columns(2)
                         csv_full = df_consolidated.to_csv(index=False)
-                        col1.download_button(
-                            "⬇️ CSV Completo",
-                            csv_full,
-                            f"completo_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                            "text/csv",
-                            use_container_width=True
-                        )
-                        summary_cols = ['u_alert_id', 'score', 'classification', 'total_occurrences']
+                        col1.download_button("⬇️ CSV Completo", csv_full, f"completo_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", "text/csv", use_container_width=True)
+                        summary_cols = ['u_alert_id', 'score', 'classification', 'total_occurrences', 'clear_percentage']
                         available_summary = [col for col in summary_cols if col in df_consolidated.columns]
                         summary = df_consolidated[available_summary].copy()
                         csv_summary = summary.to_csv(index=False)
-                        col2.download_button(
-                            "⬇️ CSV Resumido",
-                            csv_summary,
-                            f"resumo_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                            "text/csv",
-                            use_container_width=True
-                        )
+                        col2.download_button("⬇️ CSV Resumido", csv_summary, f"resumo_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", "text/csv", use_container_width=True)
     else:
         st.info("👆 Faça upload de um CSV")
         with st.expander("📖 Instruções e Validação dos Critérios"):
@@ -1769,15 +1418,13 @@ def main():
             4. **Concentração Temporal (20%)** - Horários/dias fixos
             5. **Frequência Absoluta (15%)** - Volume mínimo necessário
             
-            ### 💾 CACHE
-            - Resultados salvos automaticamente
-            - Reutilize sem reprocessar
-            - Limpe quando necessário
+            ### 🔧 CORREÇÕES APLICADAS
             
-            ### 🔄 COMPARAÇÃO COM ATHENA
-            - Upload 2 CSVs: resultado da análise + dados do Athena
-            - Identifica concordâncias e divergências
-            - Exporta relatórios detalhados
+            - ✅ `analyze_complete_silent()` SEMPRE retorna dict (nunca None)
+            - ✅ Alertas com dados insuficientes são incluídos no resultado
+            - ✅ Validação de completude: compara esperado vs processado
+            - ✅ Mensagens de alerta se houver alertas faltando
+            - ✅ Suporte para coluna 'clear' (análise de encerramento)
             """)
 
 
