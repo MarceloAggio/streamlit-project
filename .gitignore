@@ -1,0 +1,162 @@
+{
+  "Comment": "Step Function",
+  "StartAt": "Agente Classificador",
+  "States": {
+    "Agente Classificador": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "arn:aws:bedrock:REGION::foundation-model/MODEL_ID",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 2000,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text.$": "$.body.data.userPrompt"
+                }
+              ]
+            }
+          ]
+        },
+        "ContentType": "application/json"
+      },
+      "Next": "Escolha Classificação",
+      "ResultPath": "$.classificacao"
+    },
+    
+    "Escolha Classificação": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "Agente Conceitual",
+          "StringEquals": "conceitual",
+          "Variable": "$.body.data.intencaoUsuario"
+        },
+        {
+          "Next": "Agente SQL",
+          "StringEquals": "informacional",
+          "Variable": "$.body.data.intencaoUsuario"
+        },
+        {
+          "Next": "Estado Invalido",
+          "StringEquals": "invalido",
+          "Variable": "$.body.data.intencaoUsuario"
+        }
+      ],
+      "Default": "Agente Conceitual"
+    },
+    
+    "Agente Conceitual": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "arn:aws:bedrock:REGION::foundation-model/MODEL_ID",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 2000,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text.$": "$.body.data.userPrompt"
+                }
+              ]
+            }
+          ]
+        },
+        "ContentType": "application/json"
+      },
+      "Next": "Agente Resposta",
+      "ResultPath": "$.respostaConceitual"
+    },
+    
+    "Agente SQL": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+      "Parameters": {
+        "QueryString.$": "$.body.data.userPrompt",
+        "WorkGroup": "primary",
+        "ResultConfiguration": {
+          "OutputLocation": "s3://SEU_BUCKET/query-results/"
+        }
+      },
+      "Next": "Agente Resposta",
+      "ResultPath": "$.athenaQuery"
+    },
+    
+    "Agente Resposta": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "arn:aws:bedrock:REGION::foundation-model/MODEL_ID",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 2000,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text.$": "States.Format('Pergunta: {}\\n\\nDados: {}', $.body.data.userPrompt, $.athenaQuery)"
+                }
+              ]
+            }
+          ]
+        },
+        "ContentType": "application/json"
+      },
+      "Next": "Salvar Dynamo",
+      "ResultPath": "$.respostaFinal"
+    },
+    
+    "Salvar Dynamo": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "SUA_TABELA_CONVERSAS",
+        "Item": {
+          "cod_sess_cnco_ceno_cmdo": {
+            "S.$": "$.body.data.cod_sess_cnco_ceno_cmdo"
+          },
+          "cod_idno_cnco": {
+            "S.$": "$.body.data.cod_idno_cnco"
+          },
+          "timestamp": {
+            "S.$": "$$.State.EnteredTime"
+          },
+          "txt_objt_sess_cnco": {
+            "M": {
+              "txt_ctud_mens": {
+                "S.$": "$.body.data.userPrompt"
+              },
+              "txt_orig_mens": {
+                "S": "user"
+              }
+            }
+          },
+          "resposta_sistema": {
+            "S.$": "$.respostaFinal.Body.content[0].text"
+          },
+          "tipo_consulta": {
+            "S.$": "$.body.data.intencaoUsuario"
+          }
+        }
+      },
+      "ResultPath": "$.resultSalvarDynamo",
+      "End": true
+    },
+    
+    "Estado Invalido": {
+      "Type": "Fail",
+      "Cause": "A classificação retornada foi invalida ou não esperada.",
+      "Error": "ClassificaçãoInvalidaError"
+    }
+  }
+}
